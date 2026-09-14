@@ -23,6 +23,12 @@ public class Company : MonoBehaviour
     // （ホスト側で検証するため、発射条件はここに置く。UI/ワールド上のランチャー側の見た目チェックはこの値を参照する）
     public bool requireShortPositionToFire = true;
 
+    [Header("市場ノイズ")]
+    // 毎フレーム再抽選すると数字がチラついて読めないため、一定間隔でのみ再抽選する
+    public float noiseRefreshInterval = 1.0f;
+    private float noiseTimer = 0f;
+    private float currentNoise = 0f;
+
     [Header("ネットワーク")]
     public float stateBroadcastInterval = 0.2f;
     private float broadcastTimer = 0f;
@@ -80,9 +86,15 @@ public class Company : MonoBehaviour
             return;
         }
 
+        noiseTimer += Time.deltaTime;
+        if (noiseTimer >= noiseRefreshInterval)
+        {
+            noiseTimer = 0f;
+            currentNoise = Random.Range(-0.5f, 0.5f);
+        }
+
         float priceModifier = (popularity * 2.0f) - (dirtiness * 3.0f);
-        float marketNoise = Random.Range(-0.5f, 0.5f);
-        currentPrice = Mathf.Max(1.0f, basePrice + priceModifier + marketNoise);
+        currentPrice = Mathf.Max(1.0f, basePrice + priceModifier + currentNoise);
     }
 
     void BroadcastStateIfDue()

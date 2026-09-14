@@ -41,11 +41,15 @@ public class PlayerController : MonoBehaviour
     {
         float moveX = Input.GetAxisRaw("Horizontal");
         float moveZ = Input.GetAxisRaw("Vertical");
-        Vector3 moveDirection = new Vector3(moveX, 0, moveZ).normalized;
+
+        // 一人称視点のため、移動方向はプレイヤー自身の向き(マウスで回転済み)基準にする。
+        // 見た目の向きを移動方向に合わせる従来方式(見下ろし視点向け)は使わない。
+        Vector3 forward = transform.forward; forward.y = 0f; forward.Normalize();
+        Vector3 right = transform.right; right.y = 0f; right.Normalize();
+        Vector3 moveDirection = Vector3.ClampMagnitude(forward * moveZ + right * moveX, 1f);
 
         if (moveDirection.magnitude > 0.1f)
         {
-            transform.forward = moveDirection;
             transform.Translate(moveDirection * moveSpeed * Time.deltaTime, Space.World);
         }
     }
