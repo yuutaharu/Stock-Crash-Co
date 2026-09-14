@@ -16,10 +16,10 @@ public static class SceneBuilder
     private const string ScenePath = "Assets/Scenes/MainStage.unity";
     private const string RowPrefabPath = "Assets/Prefabs/CompanyTradeRow.prefab";
     // TMP標準の同梱フォント(Liberation Sans)は日本語グリフを含まないため、
-    // Window > TextMeshPro > Font Asset Creator で手動生成したフォントアセットをここから読み込み、全UIに割り当てる。
-    // (Sawarabi Gothic, SIL Open Font License, 再配布可。元ファイルはAssets/Fonts/Source/)
-    // スクリプトからのTMPフォント自動生成は「保存後に焼き込んだ文字が消える」既知の不具合があり
-    // 採用していない。手動生成の手順はAssets/Fonts/Source/ui-characters.txtと合わせて別途共有済み。
+    // Sawarabi Gothic(Assets/Fonts/Source, SIL Open Font License)から生成したTMPフォントアセットを
+    // ここから読み込み、全UIに割り当てる。無ければCreateJapaneseFontAssetで自動生成する
+    // (TMP_FontAsset.clearDynamicDataOnBuildをfalseにしないと、シーン保存後に焼き込んだ文字が
+    // 消える既知の不具合があるため、生成時に明示的にfalseへ固定している)。
     private const string JapaneseFontAssetPath = "Assets/Fonts/UI JP SDF.asset";
 
     private static TMP_FontAsset s_JapaneseFont;
@@ -75,9 +75,6 @@ public static class SceneBuilder
     {
         Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
-        // Unity 6のFont Asset Creatorウィンドウは(Legacyオプションを見せても)新しい
-        // UnityEngine.TextCore.Text.FontAsset型しか作れず、このプロジェクトが使うTMPro.TMP_FontAssetとは
-        // 型が非互換だったため、GUIでの手動生成は断念しスクリプト生成に戻す。
         s_JapaneseFont = AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(JapaneseFontAssetPath);
         if (s_JapaneseFont == null || s_JapaneseFont.characterTable == null || s_JapaneseFont.characterTable.Count == 0)
         {
@@ -91,7 +88,11 @@ public static class SceneBuilder
         Company burger = CreateCompany("Burger Kingdom", 0, new Vector3(-6f, 1.5f, 5f), new Color(0.85f, 0.35f, 0.2f));
         Company pizza = CreateCompany("Pizza Palace", 1, new Vector3(6f, 1.5f, 5f), new Color(0.95f, 0.75f, 0.2f));
 
-        TradingUIController tradingUI = CreateTradingUI();
+        CreateGameSessionManager(burger, pizza);
+
+        Transform canvasTransform = CreateUIRoot();
+        TradingUIController tradingUI = CreateTradingUI(canvasTransform);
+        CreateBriefingAndResultUI(canvasTransform);
         CreateTradingPC(new Vector3(0f, 1f, -6f), tradingUI, burger, pizza);
         GameObject player = CreatePlayer(new Vector3(0f, 1f, 0f));
         CreateFirstPersonCamera(player.transform);
@@ -132,6 +133,16 @@ public static class SceneBuilder
         return go.AddComponent<MarketManager>();
     }
 
+    private static GameSessionManager CreateGameSessionManager(params Company[] targetCompanies)
+    {
+        GameObject go = new GameObject("GameSessionManager");
+        GameSessionManager session = go.AddComponent<GameSessionManager>();
+        session.targetAmount = 3000f;
+        session.targetCompanies = targetCompanies;
+        session.matchDurationSeconds = 180f;
+        return session;
+    }
+
     private static Company CreateCompany(string companyName, int id, Vector3 position, Color color)
     {
         GameObject shop = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -140,8 +151,14 @@ public static class SceneBuilder
         shop.transform.localScale = new Vector3(3f, 3f, 3f);
         ApplyColor(shop, color);
 
-        BoxCollider collider = shop.GetComponent<BoxCollider>();
-        collider.isTrigger = true;
+        // 見た目通りの大きさで物理的に塞ぐ実体コライダー(プレイヤーがめり込まないようにする)と、
+        // それより一回り大きい検知専用のトリガーコライダー(近づいた判定用)を分けて持たせる。
+        BoxCollider solidCollider = shop.GetComponent<BoxCollider>();
+        solidCollider.isTrigger = false;
+
+        BoxCollider triggerCollider = shop.AddComponent<BoxCollider>();
+        triggerCollider.isTrigger = true;
+        triggerCollider.size = solidCollider.size * 1.6f;
 
         Company company = shop.AddComponent<Company>();
         company.companyId = id;
@@ -159,9 +176,13 @@ public static class SceneBuilder
         desk.transform.localScale = new Vector3(1.2f, 1f, 0.8f);
         ApplyColor(desk, new Color(0.15f, 0.2f, 0.3f));
 
-        BoxCollider collider = desk.GetComponent<BoxCollider>();
-        collider.isTrigger = true;
-        collider.size = new Vector3(4f, 4f, 4f); // 見た目より広い範囲で反応させる
+        // 見た目通りの大きさの実体コライダー(めり込み防止)と、操作可能距離を広げる検知用トリガーを分ける。
+        BoxCollider solidCollider = desk.GetComponent<BoxCollider>();
+        solidCollider.isTrigger = false;
+
+        BoxCollider triggerCollider = desk.AddComponent<BoxCollider>();
+        triggerCollider.isTrigger = true;
+        triggerCollider.size = new Vector3(4f, 4f, 4f); // 見た目より広い範囲で反応させる
 
         TradingPC tradingPC = desk.AddComponent<TradingPC>();
         tradingPC.tradableCompanies = companies;
@@ -198,7 +219,7 @@ public static class SceneBuilder
         camGO.AddComponent<FirstPersonLook>();
     }
 
-    private static TradingUIController CreateTradingUI()
+    private static Transform CreateUIRoot()
     {
         if (Object.FindFirstObjectByType<UnityEngine.EventSystems.EventSystem>() == null)
         {
@@ -215,8 +236,15 @@ public static class SceneBuilder
         scaler.referenceResolution = new Vector2(1280f, 720f);
         canvasGO.AddComponent<GraphicRaycaster>();
 
+        canvasGO.AddComponent<GamePhaseUIRouter>();
+
+        return canvasGO.transform;
+    }
+
+    private static TradingUIController CreateTradingUI(Transform canvasTransform)
+    {
         GameObject panelGO = new GameObject("TradingPanel", typeof(RectTransform));
-        panelGO.transform.SetParent(canvasGO.transform, false);
+        panelGO.transform.SetParent(canvasTransform, false);
         RectTransform panelRT = panelGO.GetComponent<RectTransform>();
         panelRT.anchorMin = new Vector2(0.5f, 0.5f);
         panelRT.anchorMax = new Vector2(0.5f, 0.5f);
@@ -257,6 +285,125 @@ public static class SceneBuilder
 
         panelGO.SetActive(false);
         return tradingUI;
+    }
+
+    private static void CreateBriefingAndResultUI(Transform canvasTransform)
+    {
+        GamePhaseUIRouter router = canvasTransform.GetComponent<GamePhaseUIRouter>();
+
+        // --- ブリーフィングパネル ---
+        GameObject briefingGO = new GameObject("BriefingPanel", typeof(RectTransform));
+        briefingGO.transform.SetParent(canvasTransform, false);
+        RectTransform briefingRT = briefingGO.GetComponent<RectTransform>();
+        briefingRT.anchorMin = new Vector2(0.5f, 0.5f);
+        briefingRT.anchorMax = new Vector2(0.5f, 0.5f);
+        briefingRT.sizeDelta = new Vector2(560f, 360f);
+        Image briefingBg = briefingGO.AddComponent<Image>();
+        briefingBg.color = new Color(0f, 0f, 0f, 0.85f);
+
+        BriefingUIController briefing = briefingGO.AddComponent<BriefingUIController>();
+
+        PositionTop(CreateTMPText("Title", briefingGO.transform, "ブリーフィング", 26f, TextAlignmentOptions.Center), 16f, 36f);
+
+        GameObject targetAmountGO = CreateTMPText("TargetAmountText", briefingGO.transform, "", 20f, TextAlignmentOptions.Center);
+        PositionTop(targetAmountGO, 64f, 30f);
+        briefing.targetAmountText = targetAmountGO.GetComponent<TextMeshProUGUI>();
+
+        GameObject targetCompaniesGO = CreateTMPText("TargetCompaniesText", briefingGO.transform, "", 18f, TextAlignmentOptions.Center);
+        PositionTop(targetCompaniesGO, 100f, 28f);
+        briefing.targetCompaniesText = targetCompaniesGO.GetComponent<TextMeshProUGUI>();
+
+        GameObject timeLimitGO = CreateTMPText("TimeLimitText", briefingGO.transform, "", 18f, TextAlignmentOptions.Center);
+        PositionTop(timeLimitGO, 132f, 28f);
+        briefing.timeLimitText = timeLimitGO.GetComponent<TextMeshProUGUI>();
+
+        Button startBtn = CreateButton("StartButton", briefingGO.transform, "開始", new Color(0.2f, 0.6f, 0.3f));
+        RectTransform startBtnRT = startBtn.GetComponent<RectTransform>();
+        startBtnRT.anchorMin = new Vector2(0.5f, 0f);
+        startBtnRT.anchorMax = new Vector2(0.5f, 0f);
+        startBtnRT.pivot = new Vector2(0.5f, 0f);
+        startBtnRT.sizeDelta = new Vector2(160f, 44f);
+        startBtnRT.anchoredPosition = new Vector2(0f, 24f);
+        briefing.startButton = startBtn;
+
+        GameObject waitingGO = CreateTMPText("WaitingForHostLabel", briefingGO.transform, "ホストの開始を待っています…", 16f, TextAlignmentOptions.Center);
+        RectTransform waitingRT = waitingGO.GetComponent<RectTransform>();
+        waitingRT.anchorMin = new Vector2(0.5f, 0f);
+        waitingRT.anchorMax = new Vector2(0.5f, 0f);
+        waitingRT.pivot = new Vector2(0.5f, 0f);
+        waitingRT.sizeDelta = new Vector2(400f, 30f);
+        waitingRT.anchoredPosition = new Vector2(0f, 24f);
+        waitingGO.SetActive(false);
+        briefing.waitingForHostLabel = waitingGO;
+
+        if (router != null) router.briefingPanel = briefingGO;
+
+        // --- リザルトパネル ---
+        GameObject resultGO = new GameObject("ResultPanel", typeof(RectTransform));
+        resultGO.transform.SetParent(canvasTransform, false);
+        RectTransform resultRT = resultGO.GetComponent<RectTransform>();
+        resultRT.anchorMin = new Vector2(0.5f, 0.5f);
+        resultRT.anchorMax = new Vector2(0.5f, 0.5f);
+        resultRT.sizeDelta = new Vector2(480f, 220f);
+        Image resultBg = resultGO.AddComponent<Image>();
+        resultBg.color = new Color(0f, 0f, 0f, 0.85f);
+
+        ResultUIController result = resultGO.AddComponent<ResultUIController>();
+
+        GameObject resultTitleGO = CreateTMPText("ResultTitleText", resultGO.transform, "", 28f, TextAlignmentOptions.Center);
+        PositionTop(resultTitleGO, 30f, 40f);
+        result.resultTitleText = resultTitleGO.GetComponent<TextMeshProUGUI>();
+
+        GameObject finalMoneyGO = CreateTMPText("FinalMoneyText", resultGO.transform, "", 18f, TextAlignmentOptions.Center);
+        PositionTop(finalMoneyGO, 90f, 30f);
+        result.finalMoneyText = finalMoneyGO.GetComponent<TextMeshProUGUI>();
+
+        resultGO.SetActive(false);
+        if (router != null) router.resultPanel = resultGO;
+
+        // --- 残り時間HUD ---
+        // MatchTimerHUD自身は常時アクティブなオブジェクトに付け、表示/非表示は子のPanelだけ切り替える
+        // (スクリプト自身を無効化するとUpdateが止まり、二度と再表示できなくなるため)。
+        GameObject timerHudGO = new GameObject("MatchTimerHUD", typeof(RectTransform));
+        timerHudGO.transform.SetParent(canvasTransform, false);
+        RectTransform timerHudRT = timerHudGO.GetComponent<RectTransform>();
+        timerHudRT.anchorMin = new Vector2(0.5f, 1f);
+        timerHudRT.anchorMax = new Vector2(0.5f, 1f);
+        timerHudRT.pivot = new Vector2(0.5f, 1f);
+        timerHudRT.sizeDelta = new Vector2(140f, 44f);
+        timerHudRT.anchoredPosition = new Vector2(0f, -12f);
+        MatchTimerHUD timerHud = timerHudGO.AddComponent<MatchTimerHUD>();
+
+        GameObject timerPanelGO = new GameObject("Panel", typeof(RectTransform));
+        timerPanelGO.transform.SetParent(timerHudGO.transform, false);
+        RectTransform timerPanelRT = timerPanelGO.GetComponent<RectTransform>();
+        timerPanelRT.anchorMin = Vector2.zero;
+        timerPanelRT.anchorMax = Vector2.one;
+        timerPanelRT.offsetMin = Vector2.zero;
+        timerPanelRT.offsetMax = Vector2.zero;
+        Image timerBg = timerPanelGO.AddComponent<Image>();
+        timerBg.color = new Color(0f, 0f, 0f, 0.6f);
+
+        GameObject timerTextGO = CreateTMPText("TimerText", timerPanelGO.transform, "00:00", 24f, TextAlignmentOptions.Center);
+        RectTransform timerTextRT = timerTextGO.GetComponent<RectTransform>();
+        timerTextRT.anchorMin = Vector2.zero;
+        timerTextRT.anchorMax = Vector2.one;
+        timerTextRT.offsetMin = Vector2.zero;
+        timerTextRT.offsetMax = Vector2.zero;
+
+        timerHud.panel = timerPanelGO;
+        timerHud.timerText = timerTextGO.GetComponent<TextMeshProUGUI>();
+        timerPanelGO.SetActive(false);
+    }
+
+    private static void PositionTop(GameObject go, float topOffset, float height)
+    {
+        RectTransform rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = new Vector2(0f, 1f);
+        rt.anchorMax = new Vector2(1f, 1f);
+        rt.pivot = new Vector2(0.5f, 1f);
+        rt.anchoredPosition = new Vector2(0f, -topOffset);
+        rt.sizeDelta = new Vector2(-40f, height);
     }
 
     private static CompanyTradeRow CreateRowPrefab()
