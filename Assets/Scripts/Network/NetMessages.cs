@@ -7,8 +7,6 @@ public enum NetMessageType : byte
     RequestCleanDirt = 2,
     RequestAddPopularity = 3,
     RequestBuyStock = 4,
-    RequestShortStock = 5,
-    RequestCloseShort = 6,
     RequestRocketStrike = 7,
     RequestSellStock = 8,
     StateCompany = 10,
@@ -70,7 +68,7 @@ public static class NetMessages
 
     public static byte[] PackCompanyState(
         int companyId, float currentPrice, float dirtiness, float popularity,
-        int boughtShares, int shortShares, float shortEntryPrice, bool isBankrupt)
+        int boughtShares, bool isBankrupt)
     {
         using (var ms = new MemoryStream())
         using (var w = new BinaryWriter(ms))
@@ -81,8 +79,6 @@ public static class NetMessages
             w.Write(dirtiness);
             w.Write(popularity);
             w.Write(boughtShares);
-            w.Write(shortShares);
-            w.Write(shortEntryPrice);
             w.Write(isBankrupt);
             return ms.ToArray();
         }
@@ -90,7 +86,7 @@ public static class NetMessages
 
     public static void UnpackCompanyState(
         byte[] data, out int companyId, out float currentPrice, out float dirtiness, out float popularity,
-        out int boughtShares, out int shortShares, out float shortEntryPrice, out bool isBankrupt)
+        out int boughtShares, out bool isBankrupt)
     {
         using (var ms = new MemoryStream(data, 1, data.Length - 1))
         using (var r = new BinaryReader(ms))
@@ -100,8 +96,6 @@ public static class NetMessages
             dirtiness = r.ReadSingle();
             popularity = r.ReadSingle();
             boughtShares = r.ReadInt32();
-            shortShares = r.ReadInt32();
-            shortEntryPrice = r.ReadSingle();
             isBankrupt = r.ReadBoolean();
         }
     }

@@ -16,18 +16,14 @@ public class Company : MonoBehaviour
     public float dirtiness = 0f;
     public float popularity = 0f;
 
+    // 競合企業への参照。株価は自社の評判と相手の評判の"差"で決まるため、
+    // 片方を汚す/掃除すると、その分だけもう片方の株価が逆向きに動く(合計が一定のゼロサム)。
+    [Header("競合企業")]
+    public Company rival;
+
     [Header("終盤兵器")]
     // ロケット砲で爆破されると true になり、株価は0のまま固定される（このマップ内では復活しない）
     public bool isBankrupt = false;
-    // trueの場合、この企業に空売りポジションを持っていないとロケットで爆破できない
-    // （ホスト側で検証するため、発射条件はここに置く。UI/ワールド上のランチャー側の見た目チェックはこの値を参照する）
-    public bool requireShortPositionToFire = true;
-
-    [Header("市場ノイズ")]
-    // 毎フレーム再抽選すると数字がチラついて読めないため、一定間隔でのみ再抽選する
-    public float noiseRefreshInterval = 1.0f;
-    private float noiseTimer = 0f;
-    private float currentNoise = 0f;
 
     [Header("ネットワーク")]
     public float stateBroadcastInterval = 0.2f;
@@ -78,6 +74,9 @@ public class Company : MonoBehaviour
 
     private bool IsHost() => NetworkManager.Instance == null || NetworkManager.Instance.IsHost;
 
+    // dirtiness/popularityだけで決まる決定論的な価格。何も工作しなければ変動しない。
+    // 自社の評判(popularity/dirtiness由来)と競合の評判の"差"で価格が決まるため、
+    // 相手を汚す/自分を掃除するとその分だけ自分の株価が相対的に上がる(ゼロサム)。
     void CalculateStockPrice()
     {
         if (isBankrupt)
@@ -86,15 +85,10 @@ public class Company : MonoBehaviour
             return;
         }
 
-        noiseTimer += Time.deltaTime;
-        if (noiseTimer >= noiseRefreshInterval)
-        {
-            noiseTimer = 0f;
-            currentNoise = Random.Range(-0.5f, 0.5f);
-        }
-
-        float priceModifier = (popularity * 2.0f) - (dirtiness * 3.0f);
-        currentPrice = Mathf.Max(1.0f, basePrice + priceModifier + currentNoise);
+        float ownScore = (popularity * 2.0f) - (dirtiness * 3.0f);
+        float rivalScore = rival != null ? (rival.popularity * 2.0f) - (rival.dirtiness * 3.0f) : 0f;
+        float priceModifier = ownScore - rivalScore;
+        currentPrice = Mathf.Max(1.0f, basePrice + priceModifier);
     }
 
     void BroadcastStateIfDue()
@@ -105,21 +99,14 @@ public class Company : MonoBehaviour
         if (broadcastTimer < stateBroadcastInterval) return;
         broadcastTimer = 0f;
 
-        int bought = 0, shorted = 0;
-        float shortEntry = 0f;
-        if (MarketManager.Instance != null)
-        {
-            bought = MarketManager.Instance.GetBoughtShares(companyId);
-            shorted = MarketManager.Instance.GetShortShares(companyId);
-            shortEntry = MarketManager.Instance.GetShortEntryPrice(companyId);
-        }
+        int bought = MarketManager.Instance != null ? MarketManager.Instance.GetBoughtShares(companyId) : 0;
 
-        byte[] msg = NetMessages.PackCompanyState(companyId, currentPrice, dirtiness, popularity, bought, shorted, shortEntry, isBankrupt);
+        byte[] msg = NetMessages.PackCompanyState(companyId, currentPrice, dirtiness, popularity, bought, isBankrupt);
         NetworkManager.Instance.SendToAll(msg, reliable: false);
     }
 
     // クライアント側でのみ呼ばれる。ホストから届いた状態をそのまま反映する。
-    public void ApplyNetworkState(float price, float dirt, float pop, int boughtShares, int shortShares, float shortEntryPrice, bool bankrupt)
+    public void ApplyNetworkState(float price, float dirt, float pop, int boughtShares, bool bankrupt)
     {
         currentPrice = price;
         dirtiness = dirt;
@@ -128,7 +115,7 @@ public class Company : MonoBehaviour
 
         if (MarketManager.Instance != null)
         {
-            MarketManager.Instance.ApplyNetworkPosition(companyId, boughtShares, shortShares, shortEntryPrice);
+            MarketManager.Instance.ApplyNetworkPosition(companyId, boughtShares);
         }
     }
 
@@ -167,21 +154,10 @@ public class Company : MonoBehaviour
     public void CleanDirt(float amount) { dirtiness = Mathf.Max(0f, dirtiness - amount); }
     public void AddPopularity(float amount) { popularity += amount; }
 
-    // ホスト権威モデルの実処理。発射条件はここで最終検証する
-    // （ワールド上のRocketLauncher側のチェックは見た目上のガードに過ぎない）。
+    // ホスト権威モデルの実処理。
     public void TriggerBankruptcy()
     {
         if (isBankrupt) return;
-
-        if (requireShortPositionToFire)
-        {
-            bool hasShortPosition = MarketManager.Instance != null && MarketManager.Instance.GetShortShares(companyId) > 0;
-            if (!hasShortPosition)
-            {
-                Debug.Log($"[Company] {companyName} への空売りポジションがないためロケットを発射できません。");
-                return;
-            }
-        }
 
         isBankrupt = true;
         currentPrice = 0f;

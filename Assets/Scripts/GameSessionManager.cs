@@ -13,6 +13,11 @@ public class GameSessionManager : MonoBehaviour
     public float targetAmount = 5000f;
     public Company[] targetCompanies;
 
+    // ブリーフィングで選んだ「自分たちが取引する企業」と、その裏で破壊対象になる「相手企業」。
+    // SelectCompany()で確定するまではどちらもnull。
+    public Company selectedCompany;
+    public Company rivalCompany;
+
     [Header("時間制限")]
     // この時間内に目標金額へ届かなければ敗北になる
     public float matchDurationSeconds = 300f;
@@ -21,6 +26,10 @@ public class GameSessionManager : MonoBehaviour
     public GamePhase CurrentPhase { get; private set; } = GamePhase.Briefing;
     public bool MatchWon { get; private set; } = false;
     public float RemainingTime { get; private set; } = 0f;
+
+    // 目標金額に到達済みかどうか。到達しても即勝利にはせず、相手企業側にロケット砲を出現させるだけ。
+    // 実際の勝利はrivalCompanyを爆破した時点。
+    public bool MoneyGoalReached { get; private set; } = false;
 
     // UI側はこれを購読してパネルの表示/非表示を切り替える
     public event Action<GamePhase> OnPhaseChanged;
@@ -58,7 +67,12 @@ public class GameSessionManager : MonoBehaviour
 
         if (!IsHost()) return;
 
-        if (MarketManager.Instance != null && MarketManager.Instance.playerMoney >= targetAmount)
+        if (!MoneyGoalReached && MarketManager.Instance != null && MarketManager.Instance.playerMoney >= targetAmount)
+        {
+            MoneyGoalReached = true;
+        }
+
+        if (rivalCompany != null && rivalCompany.isBankrupt)
         {
             EndMatch(won: true);
         }
@@ -97,10 +111,32 @@ public class GameSessionManager : MonoBehaviour
         if (isNowHost) BroadcastPhase();
     }
 
+    // ブリーフィング画面の企業選択ボタンから呼ぶ想定。ホスト、かつブリーフィング中のみ選び直せる。
+    public void SelectCompany(Company company)
+    {
+        if (!IsHost()) return;
+        if (CurrentPhase != GamePhase.Briefing) return;
+        if (company == null || targetCompanies == null) return;
+
+        selectedCompany = company;
+        rivalCompany = null;
+        foreach (Company candidate in targetCompanies)
+        {
+            if (candidate != null && candidate != company)
+            {
+                rivalCompany = candidate;
+                break;
+            }
+        }
+    }
+
     // ブリーフィング画面の「開始」ボタンから呼ぶ想定。ホストのみ実行できる。
     public void StartMatch()
     {
         if (!IsHost()) return;
+        if (selectedCompany == null) return;
+
+        MoneyGoalReached = false;
         RemainingTime = matchDurationSeconds;
         SetPhase(GamePhase.Playing, won: false);
         BroadcastPhase();

@@ -16,8 +16,6 @@ public class MarketManager : MonoBehaviour
     private class PositionData
     {
         public int boughtShares;
-        public int shortShares;
-        public float shortEntryPrice;
     }
     private readonly Dictionary<int, PositionData> positions = new Dictionary<int, PositionData>();
 
@@ -32,8 +30,6 @@ public class MarketManager : MonoBehaviour
     }
 
     public int GetBoughtShares(int companyId) => GetOrCreatePosition(companyId).boughtShares;
-    public int GetShortShares(int companyId) => GetOrCreatePosition(companyId).shortShares;
-    public float GetShortEntryPrice(int companyId) => GetOrCreatePosition(companyId).shortEntryPrice;
 
     [Header("ネットワーク")]
     public float walletBroadcastInterval = 0.5f;
@@ -103,20 +99,6 @@ public class MarketManager : MonoBehaviour
             NetMessages.PackTradeAction(NetMessageType.RequestBuyStock, company.companyId, amount), reliable: true);
     }
 
-    public void RequestShortStock(Company company, int amount)
-    {
-        if (IsHost()) { ShortStock(company, amount); return; }
-        NetworkManager.Instance.SendToHost(
-            NetMessages.PackTradeAction(NetMessageType.RequestShortStock, company.companyId, amount), reliable: true);
-    }
-
-    public void RequestCloseShort(Company company)
-    {
-        if (IsHost()) { CloseShortPosition(company); return; }
-        NetworkManager.Instance.SendToHost(
-            NetMessages.PackTradeAction(NetMessageType.RequestCloseShort, company.companyId, 0), reliable: true);
-    }
-
     public void RequestSellStock(Company company, int amount)
     {
         if (IsHost()) { SellStock(company, amount); return; }
@@ -132,25 +114,6 @@ public class MarketManager : MonoBehaviour
         {
             playerMoney -= cost;
             GetOrCreatePosition(company.companyId).boughtShares += amount;
-        }
-    }
-
-    public void ShortStock(Company company, int amount)
-    {
-        PositionData pos = GetOrCreatePosition(company.companyId);
-        pos.shortShares += amount;
-        pos.shortEntryPrice = company.currentPrice;
-        playerMoney += company.currentPrice * amount;
-    }
-
-    public void CloseShortPosition(Company company)
-    {
-        PositionData pos = GetOrCreatePosition(company.companyId);
-        if (pos.shortShares > 0)
-        {
-            float buyBackCost = company.currentPrice * pos.shortShares;
-            playerMoney -= buyBackCost;
-            pos.shortShares = 0;
         }
     }
 
@@ -172,11 +135,8 @@ public class MarketManager : MonoBehaviour
     }
 
     // クライアント側でのみ呼ばれる。ホストから届いたポジションをそのまま反映する。
-    public void ApplyNetworkPosition(int companyId, int boughtShares, int shortShares, float shortEntryPrice)
+    public void ApplyNetworkPosition(int companyId, int boughtShares)
     {
-        PositionData pos = GetOrCreatePosition(companyId);
-        pos.boughtShares = boughtShares;
-        pos.shortShares = shortShares;
-        pos.shortEntryPrice = shortEntryPrice;
+        GetOrCreatePosition(companyId).boughtShares = boughtShares;
     }
 }

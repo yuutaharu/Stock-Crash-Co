@@ -39,8 +39,19 @@ public class TradingPC : MonoBehaviour
         }
         else
         {
-            tradingUI.Open(tradableCompanies);
+            tradingUI.Open(GetTradableCompanies());
         }
+    }
+
+    // ブリーフィングで担当企業を選んでいる場合はその企業の株だけ取引できるようにする。
+    // GameSessionManager未使用(単体テスト等)の場合はtradableCompanies全体を使う。
+    private Company[] GetTradableCompanies()
+    {
+        if (GameSessionManager.Instance != null && GameSessionManager.Instance.selectedCompany != null)
+        {
+            return new Company[] { GameSessionManager.Instance.selectedCompany };
+        }
+        return tradableCompanies;
     }
 
     private void OnTriggerEnter(Collider other)

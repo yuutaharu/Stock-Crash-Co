@@ -13,8 +13,6 @@ public class CompanyTradeRow : MonoBehaviour
     public TMP_Text positionText;
     public Button buyButton;
     public Button sellButton;
-    public Button shortButton;
-    public Button closeShortButton;
 
     private Company company;
     private int tradeAmount = 1;
@@ -37,18 +35,6 @@ public class CompanyTradeRow : MonoBehaviour
             sellButton.onClick.RemoveAllListeners();
             sellButton.onClick.AddListener(() => MarketManager.Instance.RequestSellStock(company, tradeAmount));
         }
-
-        if (shortButton != null)
-        {
-            shortButton.onClick.RemoveAllListeners();
-            shortButton.onClick.AddListener(() => MarketManager.Instance.RequestShortStock(company, tradeAmount));
-        }
-
-        if (closeShortButton != null)
-        {
-            closeShortButton.onClick.RemoveAllListeners();
-            closeShortButton.onClick.AddListener(() => MarketManager.Instance.RequestCloseShort(company));
-        }
     }
 
     void Update()
@@ -61,16 +47,13 @@ public class CompanyTradeRow : MonoBehaviour
         }
 
         int bought = MarketManager.Instance.GetBoughtShares(company.companyId);
-        int shorted = MarketManager.Instance.GetShortShares(company.companyId);
 
         if (positionText != null)
         {
-            positionText.text = $"保有: {bought}株 / 空売り: {shorted}株";
+            positionText.text = $"保有: {bought}株";
         }
 
         if (buyButton != null) buyButton.interactable = !company.isBankrupt;
-        if (shortButton != null) shortButton.interactable = !company.isBankrupt;
         if (sellButton != null) sellButton.interactable = bought > 0;
-        if (closeShortButton != null) closeShortButton.interactable = shorted > 0;
     }
 }

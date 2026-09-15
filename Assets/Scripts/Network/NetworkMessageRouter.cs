@@ -19,8 +19,6 @@ public static class NetworkMessageRouter
                 break;
 
             case NetMessageType.RequestBuyStock:
-            case NetMessageType.RequestShortStock:
-            case NetMessageType.RequestCloseShort:
             case NetMessageType.RequestSellStock:
                 HandleTradeRequest(data);
                 break;
@@ -76,8 +74,6 @@ public static class NetworkMessageRouter
         switch (type)
         {
             case NetMessageType.RequestBuyStock: MarketManager.Instance.BuyStock(company, shares); break;
-            case NetMessageType.RequestShortStock: MarketManager.Instance.ShortStock(company, shares); break;
-            case NetMessageType.RequestCloseShort: MarketManager.Instance.CloseShortPosition(company); break;
             case NetMessageType.RequestSellStock: MarketManager.Instance.SellStock(company, shares); break;
         }
     }
@@ -87,10 +83,10 @@ public static class NetworkMessageRouter
         if (NetworkManager.Instance != null && NetworkManager.Instance.IsHost) return;
 
         NetMessages.UnpackCompanyState(data, out int companyId, out float price, out float dirt, out float pop,
-            out int boughtShares, out int shortShares, out float shortEntryPrice, out bool isBankrupt);
+            out int boughtShares, out bool isBankrupt);
         if (Company.Registry.TryGetValue(companyId, out Company company))
         {
-            company.ApplyNetworkState(price, dirt, pop, boughtShares, shortShares, shortEntryPrice, isBankrupt);
+            company.ApplyNetworkState(price, dirt, pop, boughtShares, isBankrupt);
         }
     }
 

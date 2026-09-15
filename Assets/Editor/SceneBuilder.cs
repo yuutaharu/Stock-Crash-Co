@@ -15,6 +15,7 @@ public static class SceneBuilder
 {
     private const string ScenePath = "Assets/Scenes/MainStage.unity";
     private const string RowPrefabPath = "Assets/Prefabs/CompanyTradeRow.prefab";
+    private const string FloatingTextPrefabPath = "Assets/Prefabs/FloatingText.prefab";
     // TMP標準の同梱フォント(Liberation Sans)は日本語グリフを含まないため、
     // Sawarabi Gothic(Assets/Fonts/Source, SIL Open Font License)から生成したTMPフォントアセットを
     // ここから読み込み、全UIに割り当てる。無ければCreateJapaneseFontAssetで自動生成する
@@ -83,16 +84,26 @@ public static class SceneBuilder
 
         CreateLight();
         CreateFloor();
+        CreateBoundaryWalls();
         MarketManager marketManager = CreateMarketManager();
 
         Company burger = CreateCompany("Burger Kingdom", 0, new Vector3(-6f, 1.5f, 5f), new Color(0.85f, 0.35f, 0.2f));
         Company pizza = CreateCompany("Pizza Palace", 1, new Vector3(6f, 1.5f, 5f), new Color(0.95f, 0.75f, 0.2f));
+        burger.rival = pizza;
+        pizza.rival = burger;
+
+        FloatingTextSpawner floatingTextSpawner = CreateFloatingTextSpawner();
+        AddVisualFeedback(burger, floatingTextSpawner);
+        AddVisualFeedback(pizza, floatingTextSpawner);
+
+        CreateRocketLauncher(new Vector3(-9f, 1f, 5f), burger);
+        CreateRocketLauncher(new Vector3(9f, 1f, 5f), pizza);
 
         CreateGameSessionManager(burger, pizza);
 
         Transform canvasTransform = CreateUIRoot();
         TradingUIController tradingUI = CreateTradingUI(canvasTransform);
-        CreateBriefingAndResultUI(canvasTransform);
+        CreateBriefingAndResultUI(canvasTransform, burger, pizza);
         CreateTradingPC(new Vector3(0f, 1f, -6f), tradingUI, burger, pizza);
         GameObject player = CreatePlayer(new Vector3(0f, 1f, 0f));
         CreateFirstPersonCamera(player.transform);
@@ -125,6 +136,29 @@ public static class SceneBuilder
         floor.transform.position = Vector3.zero;
         floor.transform.localScale = new Vector3(2f, 1f, 2f); // 20x20
         ApplyColor(floor, new Color(0.5f, 0.55f, 0.5f));
+    }
+
+    // 床の外周を壁で囲み、プレイヤーがフィールド外へ歩いて落下しないようにする。
+    private static void CreateBoundaryWalls()
+    {
+        const float half = 10f; // Floorの一辺20の半分
+        const float wallHeight = 5f;
+        const float wallThickness = 1f;
+        Color wallColor = new Color(0.3f, 0.32f, 0.35f);
+
+        CreateWall("Wall_North", new Vector3(0f, wallHeight / 2f, half), new Vector3(half * 2f + wallThickness, wallHeight, wallThickness), wallColor);
+        CreateWall("Wall_South", new Vector3(0f, wallHeight / 2f, -half), new Vector3(half * 2f + wallThickness, wallHeight, wallThickness), wallColor);
+        CreateWall("Wall_East", new Vector3(half, wallHeight / 2f, 0f), new Vector3(wallThickness, wallHeight, half * 2f + wallThickness), wallColor);
+        CreateWall("Wall_West", new Vector3(-half, wallHeight / 2f, 0f), new Vector3(wallThickness, wallHeight, half * 2f + wallThickness), wallColor);
+    }
+
+    private static void CreateWall(string name, Vector3 position, Vector3 size, Color color)
+    {
+        GameObject wall = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        wall.name = name;
+        wall.transform.position = position;
+        wall.transform.localScale = size;
+        ApplyColor(wall, color);
     }
 
     private static MarketManager CreateMarketManager()
@@ -166,6 +200,145 @@ public static class SceneBuilder
         company.basePrice = 100f;
         company.currentPrice = 100f;
         return company;
+    }
+
+    // 数値ポップアップ(FloatingText)を生成するだけの共有スポナー。全店舗から参照される。
+    private static FloatingTextSpawner CreateFloatingTextSpawner()
+    {
+        GameObject go = new GameObject("FloatingTextSpawner");
+        FloatingTextSpawner spawner = go.AddComponent<FloatingTextSpawner>();
+        spawner.spawnOffset = new Vector3(0f, 2f, 0f);
+        spawner.floatingTextPrefab = CreateFloatingTextPrefab();
+        return spawner;
+    }
+
+    private static FloatingText CreateFloatingTextPrefab()
+    {
+        GameObject go = new GameObject("FloatingText");
+        TextMeshPro tmp = go.AddComponent<TextMeshPro>();
+        tmp.fontSize = 4f;
+        tmp.alignment = TextAlignmentOptions.Center;
+        if (s_JapaneseFont != null) tmp.font = s_JapaneseFont;
+        FloatingText floatingText = go.AddComponent<FloatingText>();
+
+        if (!AssetDatabase.IsValidFolder("Assets/Prefabs"))
+        {
+            AssetDatabase.CreateFolder("Assets", "Prefabs");
+        }
+        GameObject prefabAsset = PrefabUtility.SaveAsPrefabAsset(go, FloatingTextPrefabPath);
+        Object.DestroyImmediate(go);
+        return prefabAsset.GetComponent<FloatingText>();
+    }
+
+    // dirtiness/popularity/破産を見た目に変換するCompanyVisualFeedbackを組み立てて店舗に付与する。
+    private static void AddVisualFeedback(Company company, FloatingTextSpawner spawner)
+    {
+        GameObject shop = company.gameObject;
+
+        CompanyVisualFeedback feedback = shop.AddComponent<CompanyVisualFeedback>();
+        feedback.company = company;
+        feedback.floatingTextSpawner = spawner;
+        feedback.popupOrigin = shop.transform;
+
+        // 汚れは店の足元にゴミが積み上がっていくイメージ、人気は屋根の上に星が増えていくイメージ。
+        feedback.dirtStageProps = CreateStageProps(shop.transform, "Dirt", 4, new Color(0.35f, 0.25f, 0.12f), baseY: 0.3f, radius: 1.8f, itemSize: 0.4f);
+        feedback.dirtStageThresholds = new float[] { 10f, 30f, 60f, 100f };
+
+        feedback.popularityStageProps = CreateStageProps(shop.transform, "Popularity", 4, new Color(1f, 0.85f, 0.2f), baseY: 3.3f, radius: 1.0f, itemSize: 0.35f);
+        feedback.popularityStageThresholds = new float[] { 10f, 30f, 60f, 100f };
+
+        feedback.dirtBurstEffect = CreateBurstParticles(shop.transform, "DirtBurst", new Color(0.4f, 0.25f, 0.1f));
+        feedback.cleanBurstEffect = CreateBurstParticles(shop.transform, "CleanBurst", new Color(0.4f, 0.9f, 1f));
+        feedback.popularityBurstEffect = CreateBurstParticles(shop.transform, "PopularityBurst", new Color(1f, 0.9f, 0.2f));
+
+        feedback.bankruptEffect = CreateBankruptOverlay(shop.transform);
+    }
+
+    private static GameObject[] CreateStageProps(Transform parent, string namePrefix, int count, Color color, float baseY, float radius, float itemSize)
+    {
+        GameObject[] props = new GameObject[count];
+        for (int i = 0; i < count; i++)
+        {
+            GameObject go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            go.name = $"{namePrefix}Stage_{i}";
+            go.transform.SetParent(parent, false);
+
+            float angle = (360f / count) * i * Mathf.Deg2Rad;
+            go.transform.localPosition = new Vector3(Mathf.Cos(angle) * radius, baseY, Mathf.Sin(angle) * radius);
+            go.transform.localScale = Vector3.one * itemSize;
+
+            // 演出専用の見た目だけのオブジェクトなので、物理判定に干渉しないようコライダーは外す。
+            Object.DestroyImmediate(go.GetComponent<BoxCollider>());
+            ApplyColor(go, color);
+            go.SetActive(false);
+            props[i] = go;
+        }
+        return props;
+    }
+
+    private static ParticleSystem CreateBurstParticles(Transform parent, string name, Color color)
+    {
+        GameObject go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        go.transform.localPosition = new Vector3(0f, 1.6f, 0f);
+
+        ParticleSystem ps = go.AddComponent<ParticleSystem>();
+        ParticleSystem.MainModule main = ps.main;
+        main.loop = false;
+        main.playOnAwake = false;
+        main.startLifetime = 0.6f;
+        main.startSpeed = 2.5f;
+        main.startSize = 0.3f;
+        main.startColor = color;
+        main.duration = 0.5f;
+
+        ParticleSystem.EmissionModule emission = ps.emission;
+        emission.rateOverTime = 0f;
+        emission.SetBursts(new ParticleSystem.Burst[] { new ParticleSystem.Burst(0f, 12) });
+
+        ParticleSystem.ShapeModule shape = ps.shape;
+        shape.shapeType = ParticleSystemShapeType.Sphere;
+        shape.radius = 0.3f;
+
+        return ps;
+    }
+
+    private static GameObject CreateBankruptOverlay(Transform parent)
+    {
+        GameObject go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        go.name = "BankruptOverlay";
+        go.transform.SetParent(parent, false);
+        go.transform.localPosition = Vector3.zero;
+        go.transform.localScale = Vector3.one * 1.05f; // 本体より一回り大きく覆う
+        Object.DestroyImmediate(go.GetComponent<BoxCollider>());
+        ApplyColor(go, new Color(0.05f, 0.05f, 0.05f));
+        go.SetActive(false);
+        return go;
+    }
+
+    // 終盤兵器。目標金額を達成すると相手企業側だけ出現し、Eキー長押しで即破産させられる
+    // (出現条件・長押し判定はRocketLauncher.cs側。ここでは見た目とコライダーを組み立てるだけ)。
+    private static void CreateRocketLauncher(Vector3 position, Company targetCompany)
+    {
+        GameObject go = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+        go.name = $"RocketLauncher_{targetCompany.companyName}";
+        go.transform.position = position;
+        go.transform.localScale = new Vector3(0.6f, 1f, 0.6f);
+        ApplyColor(go, new Color(0.25f, 0.2f, 0.2f));
+
+        // Cylinderプリミティブは既定でCapsuleColliderが付く。これを実体(物理)側として使い、
+        // 別途もう一回り大きいBoxColliderを検知用トリガーとして追加する。
+        CapsuleCollider solidCollider = go.GetComponent<CapsuleCollider>();
+        solidCollider.isTrigger = false;
+
+        BoxCollider triggerCollider = go.AddComponent<BoxCollider>();
+        triggerCollider.isTrigger = true;
+        triggerCollider.size = new Vector3(4f, 4f, 4f);
+
+        RocketLauncher launcher = go.AddComponent<RocketLauncher>();
+        launcher.targetCompany = targetCompany;
+        launcher.holdSecondsToFire = 2f;
+        launcher.fireEffect = CreateBurstParticles(go.transform, "FireBurst", new Color(1f, 0.5f, 0.1f));
     }
 
     private static void CreateTradingPC(Vector3 position, TradingUIController tradingUI, params Company[] companies)
@@ -287,7 +460,7 @@ public static class SceneBuilder
         return tradingUI;
     }
 
-    private static void CreateBriefingAndResultUI(Transform canvasTransform)
+    private static void CreateBriefingAndResultUI(Transform canvasTransform, params Company[] selectableCompanies)
     {
         GamePhaseUIRouter router = canvasTransform.GetComponent<GamePhaseUIRouter>();
 
@@ -297,7 +470,7 @@ public static class SceneBuilder
         RectTransform briefingRT = briefingGO.GetComponent<RectTransform>();
         briefingRT.anchorMin = new Vector2(0.5f, 0.5f);
         briefingRT.anchorMax = new Vector2(0.5f, 0.5f);
-        briefingRT.sizeDelta = new Vector2(560f, 360f);
+        briefingRT.sizeDelta = new Vector2(560f, 440f);
         Image briefingBg = briefingGO.AddComponent<Image>();
         briefingBg.color = new Color(0f, 0f, 0f, 0.85f);
 
@@ -316,6 +489,34 @@ public static class SceneBuilder
         GameObject timeLimitGO = CreateTMPText("TimeLimitText", briefingGO.transform, "", 18f, TextAlignmentOptions.Center);
         PositionTop(timeLimitGO, 132f, 28f);
         briefing.timeLimitText = timeLimitGO.GetComponent<TextMeshProUGUI>();
+
+        // --- 担当企業の選択ボタン ---
+        GameObject companyButtonsRow = new GameObject("CompanyButtons", typeof(RectTransform));
+        companyButtonsRow.transform.SetParent(briefingGO.transform, false);
+        RectTransform companyButtonsRT = companyButtonsRow.GetComponent<RectTransform>();
+        companyButtonsRT.anchorMin = new Vector2(0f, 1f);
+        companyButtonsRT.anchorMax = new Vector2(1f, 1f);
+        companyButtonsRT.pivot = new Vector2(0.5f, 1f);
+        companyButtonsRT.anchoredPosition = new Vector2(0f, -172f);
+        companyButtonsRT.sizeDelta = new Vector2(-40f, 44f);
+        HorizontalLayoutGroup companyButtonsHLG = companyButtonsRow.AddComponent<HorizontalLayoutGroup>();
+        companyButtonsHLG.spacing = 12f;
+        companyButtonsHLG.childControlWidth = true;
+        companyButtonsHLG.childForceExpandWidth = true;
+        companyButtonsHLG.childControlHeight = true;
+        companyButtonsHLG.childForceExpandHeight = true;
+
+        Button[] companyButtons = new Button[selectableCompanies.Length];
+        for (int i = 0; i < selectableCompanies.Length; i++)
+        {
+            Color color = i == 0 ? new Color(0.7f, 0.35f, 0.2f) : new Color(0.8f, 0.65f, 0.2f);
+            companyButtons[i] = CreateButton($"CompanyButton_{i}", companyButtonsRow.transform, selectableCompanies[i].companyName, color);
+        }
+        briefing.companyButtons = companyButtons;
+
+        GameObject selectedCompanyGO = CreateTMPText("SelectedCompanyText", briefingGO.transform, "担当企業を選んでください", 18f, TextAlignmentOptions.Center);
+        PositionTop(selectedCompanyGO, 224f, 28f);
+        briefing.selectedCompanyText = selectedCompanyGO.GetComponent<TextMeshProUGUI>();
 
         Button startBtn = CreateButton("StartButton", briefingGO.transform, "開始", new Color(0.2f, 0.6f, 0.3f));
         RectTransform startBtnRT = startBtn.GetComponent<RectTransform>();
@@ -394,6 +595,63 @@ public static class SceneBuilder
         timerHud.panel = timerPanelGO;
         timerHud.timerText = timerTextGO.GetComponent<TextMeshProUGUI>();
         timerPanelGO.SetActive(false);
+
+        // --- ロケット砲 チャージゲージ ---
+        // 同じ理由でRocketChargeGaugeHUD自身は常時アクティブなオブジェクトに付け、Panelだけ切り替える。
+        GameObject gaugeHudGO = new GameObject("RocketChargeGaugeHUD", typeof(RectTransform));
+        gaugeHudGO.transform.SetParent(canvasTransform, false);
+        RectTransform gaugeHudRT = gaugeHudGO.GetComponent<RectTransform>();
+        gaugeHudRT.anchorMin = new Vector2(0.5f, 0f);
+        gaugeHudRT.anchorMax = new Vector2(0.5f, 0f);
+        gaugeHudRT.pivot = new Vector2(0.5f, 0f);
+        gaugeHudRT.sizeDelta = new Vector2(320f, 32f);
+        gaugeHudRT.anchoredPosition = new Vector2(0f, 90f);
+        RocketChargeGaugeHUD gaugeHud = gaugeHudGO.AddComponent<RocketChargeGaugeHUD>();
+
+        GameObject gaugePanelGO = new GameObject("Panel", typeof(RectTransform));
+        gaugePanelGO.transform.SetParent(gaugeHudGO.transform, false);
+        RectTransform gaugePanelRT = gaugePanelGO.GetComponent<RectTransform>();
+        gaugePanelRT.anchorMin = Vector2.zero;
+        gaugePanelRT.anchorMax = Vector2.one;
+        gaugePanelRT.offsetMin = Vector2.zero;
+        gaugePanelRT.offsetMax = Vector2.zero;
+        Image gaugeBg = gaugePanelGO.AddComponent<Image>();
+        gaugeBg.color = new Color(0f, 0f, 0f, 0.6f);
+
+        GameObject gaugeFillBgGO = new GameObject("FillBackground", typeof(RectTransform));
+        gaugeFillBgGO.transform.SetParent(gaugePanelGO.transform, false);
+        RectTransform gaugeFillBgRT = gaugeFillBgGO.GetComponent<RectTransform>();
+        gaugeFillBgRT.anchorMin = Vector2.zero;
+        gaugeFillBgRT.anchorMax = Vector2.one;
+        gaugeFillBgRT.offsetMin = new Vector2(4f, 4f);
+        gaugeFillBgRT.offsetMax = new Vector2(-4f, -4f);
+        Image gaugeFillBg = gaugeFillBgGO.AddComponent<Image>();
+        gaugeFillBg.color = new Color(1f, 1f, 1f, 0.15f);
+
+        GameObject gaugeFillGO = new GameObject("Fill", typeof(RectTransform));
+        gaugeFillGO.transform.SetParent(gaugeFillBgGO.transform, false);
+        RectTransform gaugeFillRT = gaugeFillGO.GetComponent<RectTransform>();
+        gaugeFillRT.anchorMin = Vector2.zero;
+        gaugeFillRT.anchorMax = Vector2.one;
+        gaugeFillRT.offsetMin = Vector2.zero;
+        gaugeFillRT.offsetMax = Vector2.zero;
+        Image gaugeFill = gaugeFillGO.AddComponent<Image>();
+        gaugeFill.color = new Color(1f, 0.5f, 0.1f, 1f);
+        gaugeFill.type = Image.Type.Filled;
+        gaugeFill.fillMethod = Image.FillMethod.Horizontal;
+        gaugeFill.fillOrigin = (int)Image.OriginHorizontal.Left;
+        gaugeFill.fillAmount = 0f;
+
+        GameObject gaugeLabelGO = CreateTMPText("Label", gaugePanelGO.transform, "発射準備中…", 14f, TextAlignmentOptions.Center);
+        RectTransform gaugeLabelRT = gaugeLabelGO.GetComponent<RectTransform>();
+        gaugeLabelRT.anchorMin = Vector2.zero;
+        gaugeLabelRT.anchorMax = Vector2.one;
+        gaugeLabelRT.offsetMin = Vector2.zero;
+        gaugeLabelRT.offsetMax = Vector2.zero;
+
+        gaugeHud.panel = gaugePanelGO;
+        gaugeHud.fillImage = gaugeFill;
+        gaugePanelGO.SetActive(false);
     }
 
     private static void PositionTop(GameObject go, float topOffset, float height)
@@ -430,7 +688,7 @@ public static class SceneBuilder
         GameObject priceGO = CreateTMPText("PriceText", rowGO.transform, "$100.00", 18f, TextAlignmentOptions.Left);
         rowScript.priceText = priceGO.GetComponent<TextMeshProUGUI>();
 
-        GameObject posGO = CreateTMPText("PositionText", rowGO.transform, "保有: 0株 / 空売り: 0株", 16f, TextAlignmentOptions.Left);
+        GameObject posGO = CreateTMPText("PositionText", rowGO.transform, "保有: 0株", 16f, TextAlignmentOptions.Left);
         rowScript.positionText = posGO.GetComponent<TextMeshProUGUI>();
 
         GameObject buttonsRow = new GameObject("Buttons", typeof(RectTransform));
@@ -446,8 +704,6 @@ public static class SceneBuilder
 
         rowScript.buyButton = CreateButton("BuyButton", buttonsRow.transform, "買う", new Color(0.2f, 0.55f, 0.9f));
         rowScript.sellButton = CreateButton("SellButton", buttonsRow.transform, "売る", new Color(0.3f, 0.7f, 0.4f));
-        rowScript.shortButton = CreateButton("ShortButton", buttonsRow.transform, "空売り", new Color(0.8f, 0.4f, 0.2f));
-        rowScript.closeShortButton = CreateButton("CloseShortButton", buttonsRow.transform, "返済", new Color(0.6f, 0.3f, 0.7f));
 
         if (!AssetDatabase.IsValidFolder("Assets/Prefabs"))
         {
