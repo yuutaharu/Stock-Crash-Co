@@ -16,15 +16,21 @@ public class TradingUIController : MonoBehaviour
 
     private readonly List<CompanyTradeRow> spawnedRows = new List<CompanyTradeRow>();
 
+    // FirstPersonLook側がカーソルのロック可否を判断するために参照する。
+    // (取引画面が開いている間はプレイ中でもカーソルをロックしない)
+    public static bool IsOpen { get; private set; } = false;
+
     public void Open(IReadOnlyList<Company> companies)
     {
         gameObject.SetActive(true);
         RebuildRows(companies);
+        IsOpen = true;
     }
 
     public void Close()
     {
         gameObject.SetActive(false);
+        IsOpen = false;
     }
 
     private void RebuildRows(IReadOnlyList<Company> companies)

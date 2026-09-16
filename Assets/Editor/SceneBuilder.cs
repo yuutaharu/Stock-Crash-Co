@@ -189,12 +189,21 @@ public static class SceneBuilder
         AddPlayerCharacterModel(player);
         GameObject fpsCamera = CreateFirstPersonCamera(player.transform);
         FirstPersonLook firstPersonLook = fpsCamera.GetComponent<FirstPersonLook>();
-        CreateSettingsUI(canvasTransform, sfx, musicPlayer, firstPersonLook, openSettingsButton);
+        GameObject mopViewModel = CreateMopViewModel(fpsCamera.transform);
+        GameObject trashViewModel = CreateTrashViewModel(fpsCamera.transform);
+        SettingsUIController settingsUI = CreateSettingsUI(canvasTransform, sfx, musicPlayer, firstPersonLook, openSettingsButton);
+        CreateTitleScreen(canvasTransform, sfx, settingsUI);
+        // 設定パネルはタイトル画面/ブリーフィング画面どちらから開いても最前面に出したいので、
+        // UIルートの最後の子(=最前面)に並べ直す。
+        settingsUI.transform.SetAsLastSibling();
 
         GameObject trashPrefab = CreateTrashPrefab(sfx);
         PlayerController playerController = player.GetComponent<PlayerController>();
         playerController.trashPrefab = trashPrefab;
         playerController.throwOrigin = fpsCamera.transform;
+        playerController.mopViewModel = mopViewModel;
+        playerController.trashViewModel = trashViewModel;
+        CreatePickups(sfx);
 
         CreateNPCs(6);
 
@@ -421,8 +430,14 @@ public static class SceneBuilder
     // targetFootprint: 横幅(x/zの大きい方)がこのサイズになるよう自動スケールする。
     private static GameObject InstantiateBuilding(string prefabFileName, string objectName, Vector3 position, float targetFootprint)
     {
-        string path = $"{BuildingsFolder}/{prefabFileName}.prefab";
-        GameObject prefabAsset = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+        return InstantiatePropAutoScaled($"{BuildingsFolder}/{prefabFileName}.prefab", objectName, position, targetFootprint);
+    }
+
+    // 任意のプレハブ/モデルアセットをワールド上の指定位置にインスタンス化する。見つからなければ箱で代用する。
+    // targetFootprint: 横幅(x/zの大きい方)がこのサイズになるよう自動スケールし、底面がpositionのY座標に接地するようにする。
+    private static GameObject InstantiatePropAutoScaled(string assetPath, string objectName, Vector3 position, float targetFootprint)
+    {
+        GameObject prefabAsset = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
 
         GameObject instance;
         if (prefabAsset != null)
@@ -431,7 +446,7 @@ public static class SceneBuilder
         }
         else
         {
-            Debug.LogWarning($"SceneBuilder: 建物プレハブが見つかりません ({path})。代わりに箱を使います。");
+            Debug.LogWarning($"SceneBuilder: プレハブ/モデルが見つかりません ({assetPath})。代わりに箱を使います。");
             instance = GameObject.CreatePrimitive(PrimitiveType.Cube);
         }
         instance.name = objectName;
@@ -753,22 +768,20 @@ public static class SceneBuilder
         camGO.AddComponent<AudioListener>();
         camGO.AddComponent<FirstPersonLook>();
 
-        CreateMopViewModel(camGO.transform);
         return camGO;
     }
 
-    // モップは常時持っている道具として、一人称カメラの右下に固定表示する(掃除の演出は数値/ゴミ除去側で行う)。
-    private static void CreateMopViewModel(Transform camera)
+    // モップの見た目(取っ手+ヘッド)を組み立てるだけ。呼び出し側で配置場所(一人称視点の手元 or
+    // マップ上のPickup)を設定する。原点(ローカル0,0,0)がヘッド底面になるよう配置してあるので、
+    // ワールドに置く時はそのままpositionを接地面に合わせられる。
+    private static GameObject BuildMopVisual()
     {
-        GameObject mop = new GameObject("MopViewModel");
-        mop.transform.SetParent(camera, false);
-        mop.transform.localPosition = new Vector3(0.35f, -0.35f, 0.6f);
-        mop.transform.localRotation = Quaternion.Euler(15f, 0f, -10f);
+        GameObject mop = new GameObject("Mop");
 
         GameObject handle = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
         handle.name = "Handle";
         handle.transform.SetParent(mop.transform, false);
-        handle.transform.localPosition = new Vector3(0f, 0.4f, 0f);
+        handle.transform.localPosition = new Vector3(0f, 0.58f, 0f);
         handle.transform.localScale = new Vector3(0.03f, 0.5f, 0.03f);
         Object.DestroyImmediate(handle.GetComponent<CapsuleCollider>());
         ApplyColor(handle, new Color(0.4f, 0.28f, 0.15f));
@@ -776,10 +789,126 @@ public static class SceneBuilder
         GameObject head = GameObject.CreatePrimitive(PrimitiveType.Cube);
         head.name = "Head";
         head.transform.SetParent(mop.transform, false);
-        head.transform.localPosition = new Vector3(0f, -0.12f, 0f);
+        head.transform.localPosition = new Vector3(0f, 0.06f, 0f);
         head.transform.localScale = new Vector3(0.14f, 0.12f, 0.08f);
         Object.DestroyImmediate(head.GetComponent<BoxCollider>());
         ApplyColor(head, new Color(0.85f, 0.82f, 0.7f));
+
+        return mop;
+    }
+
+    // 一人称カメラの右下に固定表示する、モップを持っている時だけ見せる腕元モデル。拾うまでは非表示。
+    private static GameObject CreateMopViewModel(Transform camera)
+    {
+        GameObject mop = BuildMopVisual();
+        mop.name = "MopViewModel";
+        mop.transform.SetParent(camera, false);
+        mop.transform.localPosition = new Vector3(0.35f, -0.4f, 0.6f);
+        mop.transform.localRotation = Quaternion.Euler(15f, 0f, -10f);
+        mop.SetActive(false);
+        return mop;
+    }
+
+    // マップに置く、拾う前のモップ本体。プレイヤーが触れるとPickupItem経由で手に入る。
+    private static GameObject CreateMopPickup(Vector3 position, AudioClip pickupSound)
+    {
+        GameObject mop = BuildMopVisual();
+        mop.name = "MopPickup";
+        mop.transform.position = position;
+
+        SphereCollider trigger = mop.AddComponent<SphereCollider>();
+        trigger.isTrigger = true;
+        trigger.radius = 0.6f;
+        trigger.center = new Vector3(0f, 0.4f, 0f);
+
+        PickupItem pickup = mop.AddComponent<PickupItem>();
+        pickup.itemType = PickupItem.ItemType.Mop;
+        pickup.respawnSeconds = 6f;
+        pickup.pickupSound = pickupSound;
+
+        return mop;
+    }
+
+    // 空き缶モデル(Hyper Casual Urban Asset Pack)を一人称視点の手元に表示する、
+    // ゴミを持っている時だけ見せるビューモデル。拾うまでは非表示。
+    private const string UrbanPropsFolder = "Assets/HEXXX/Hyper Casual Urban Asset Pack/Model";
+    private const string UrbanPropsMaterialPath = "Assets/HEXXX/Hyper Casual Urban Asset Pack/Material/HyperCasualStreetEnvironment_mat.mat";
+
+    // このパックのfbxは素の状態だとマテリアル未設定(materialImportMode: None)で真っ白/無色で
+    // 表示されるため、パック共通のパレットマテリアルを明示的に割り当てる
+    // (Trash_can.prefab等、パック側が用意した既存プレハブも同じマテリアルを使っている)。
+    private static void ApplyUrbanPropMaterial(GameObject go)
+    {
+        Material material = AssetDatabase.LoadAssetAtPath<Material>(UrbanPropsMaterialPath);
+        if (material == null) return;
+
+        foreach (Renderer r in go.GetComponentsInChildren<Renderer>())
+        {
+            Material[] materials = new Material[r.sharedMaterials.Length];
+            for (int i = 0; i < materials.Length; i++) materials[i] = material;
+            r.sharedMaterials = materials;
+        }
+    }
+
+    private static GameObject CreateTrashViewModel(Transform camera)
+    {
+        GameObject root = new GameObject("TrashViewModel");
+        root.transform.SetParent(camera, false);
+        root.transform.localPosition = new Vector3(0.3f, -0.35f, 0.5f);
+        root.transform.localRotation = Quaternion.Euler(0f, 30f, 0f);
+
+        GameObject visual = InstantiatePropAutoScaled($"{UrbanPropsFolder}/soda_can.fbx", "Visual", Vector3.zero, 0.16f);
+        visual.transform.SetParent(root.transform, false);
+        foreach (Collider c in visual.GetComponentsInChildren<Collider>()) Object.DestroyImmediate(c);
+        ApplyUrbanPropMaterial(visual);
+
+        root.SetActive(false);
+        return root;
+    }
+
+    // マップに置く、拾う前のゴミ本体(空き缶)。soda_can/soda_can_2を交互に使って見た目に変化を付ける。
+    private static readonly string[] TrashPickupModelNames = { "soda_can", "soda_can_2" };
+
+    private static GameObject CreateTrashPickup(Vector3 position, AudioClip pickupSound, int variantIndex)
+    {
+        string modelName = TrashPickupModelNames[variantIndex % TrashPickupModelNames.Length];
+        GameObject go = InstantiatePropAutoScaled($"{UrbanPropsFolder}/{modelName}.fbx", $"TrashPickup_{variantIndex}", position, 0.28f);
+        ApplyUrbanPropMaterial(go);
+
+        foreach (Collider c in go.GetComponentsInChildren<Collider>()) Object.DestroyImmediate(c);
+        SphereCollider trigger = go.AddComponent<SphereCollider>();
+        trigger.isTrigger = true;
+        trigger.radius = 0.6f;
+        trigger.center = new Vector3(0f, 0.15f, 0f);
+
+        PickupItem pickup = go.AddComponent<PickupItem>();
+        pickup.itemType = PickupItem.ItemType.Trash;
+        pickup.respawnSeconds = 9f;
+        pickup.pickupSound = pickupSound;
+
+        return go;
+    }
+
+    // マップ上に工作用のピックアップ(ゴミ/モップ)を配置する。
+    private static void CreatePickups(SfxSet sfx)
+    {
+        Vector3[] trashPositions =
+        {
+            new Vector3(-10f, 0f, 5f),
+            new Vector3(10f, 0f, 5f),
+            new Vector3(-5f, 0f, -2f),
+            new Vector3(5f, 0f, -2f),
+            new Vector3(0f, 0f, 8f),
+            new Vector3(-14f, 0f, 0f),
+            new Vector3(14f, 0f, 0f),
+        };
+        for (int i = 0; i < trashPositions.Length; i++)
+        {
+            CreateTrashPickup(trashPositions[i], sfx.Click, i);
+        }
+
+        CreateMopPickup(new Vector3(-8f, 0f, 9f), sfx.Click);
+        CreateMopPickup(new Vector3(8f, 0f, 9f), sfx.Click);
     }
 
     // 投げるゴミ本体。プレハブとして保存し、PlayerControllerがInstantiateする。
@@ -798,24 +927,10 @@ public static class SceneBuilder
         projectile.dirtAmount = 5f;
         projectile.splatSound = sfx.Dirt;
 
-        GameObject core = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        core.name = "Visual";
-        core.transform.SetParent(trash.transform, false);
-        core.transform.localScale = Vector3.one * 0.3f;
-        Object.DestroyImmediate(core.GetComponent<SphereCollider>());
-        ApplyColor(core, new Color(0.35f, 0.28f, 0.15f));
-
-        for (int i = 0; i < 3; i++)
-        {
-            GameObject fleck = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            fleck.name = $"Fleck_{i}";
-            fleck.transform.SetParent(trash.transform, false);
-            fleck.transform.localPosition = Random.insideUnitSphere * 0.12f;
-            fleck.transform.localRotation = Random.rotation;
-            fleck.transform.localScale = Vector3.one * 0.12f;
-            Object.DestroyImmediate(fleck.GetComponent<BoxCollider>());
-            ApplyColor(fleck, new Color(0.3f, 0.4f, 0.15f));
-        }
+        GameObject visual = InstantiatePropAutoScaled($"{UrbanPropsFolder}/soda_can.fbx", "Visual", Vector3.zero, 0.28f);
+        visual.transform.SetParent(trash.transform, false);
+        foreach (Collider c in visual.GetComponentsInChildren<Collider>()) Object.DestroyImmediate(c);
+        ApplyUrbanPropMaterial(visual);
 
         if (!AssetDatabase.IsValidFolder("Assets/Prefabs"))
         {
@@ -1171,20 +1286,32 @@ public static class SceneBuilder
     }
 
     // SFX/BGM音量とマウス感度を調整するオプションパネル。ブリーフィング画面の「設定」ボタンから開く。
-    private static void CreateSettingsUI(Transform canvasTransform, SfxSet sfx, MusicPlayer musicPlayer, FirstPersonLook firstPersonLook, Button openButton)
+    // ルート(SettingsUIController自身)は常時アクティブにしておき、表示/非表示は子のPanelだけ切り替える。
+    // ルート自体を無効化すると、開くボタン/Escapeキーのイベント登録(Awake)が二度と走らなくなるため。
+    private static SettingsUIController CreateSettingsUI(Transform canvasTransform, SfxSet sfx, MusicPlayer musicPlayer, FirstPersonLook firstPersonLook, Button openButton)
     {
-        GameObject panelGO = new GameObject("SettingsPanel", typeof(RectTransform));
-        panelGO.transform.SetParent(canvasTransform, false);
+        GameObject rootGO = new GameObject("SettingsUI", typeof(RectTransform));
+        rootGO.transform.SetParent(canvasTransform, false);
+        RectTransform rootRT = rootGO.GetComponent<RectTransform>();
+        rootRT.anchorMin = Vector2.zero;
+        rootRT.anchorMax = Vector2.one;
+        rootRT.offsetMin = Vector2.zero;
+        rootRT.offsetMax = Vector2.zero;
+
+        SettingsUIController settings = rootGO.AddComponent<SettingsUIController>();
+        settings.musicPlayer = musicPlayer;
+        settings.firstPersonLook = firstPersonLook;
+        settings.openButton = openButton;
+        settings.openSound = sfx.Click;
+
+        GameObject panelGO = new GameObject("Panel", typeof(RectTransform));
+        panelGO.transform.SetParent(rootGO.transform, false);
         RectTransform panelRT = panelGO.GetComponent<RectTransform>();
         panelRT.anchorMin = new Vector2(0.5f, 0.5f);
         panelRT.anchorMax = new Vector2(0.5f, 0.5f);
         panelRT.sizeDelta = new Vector2(420f, 320f);
         Image panelBg = panelGO.AddComponent<Image>();
         panelBg.color = new Color(0f, 0f, 0f, 0.9f);
-
-        SettingsUIController settings = panelGO.AddComponent<SettingsUIController>();
-        settings.musicPlayer = musicPlayer;
-        settings.firstPersonLook = firstPersonLook;
 
         PositionTop(CreateTMPText("Title", panelGO.transform, "設定", 24f, TextAlignmentOptions.Center), 16f, 32f);
 
@@ -1215,16 +1342,66 @@ public static class SceneBuilder
         closeBtnRT.anchoredPosition = new Vector2(0f, 20f);
         settings.closeButton = closeBtn;
 
-        panelGO.SetActive(false);
+        settings.panelRoot = panelGO;
+        return settings;
+    }
 
-        if (openButton != null)
-        {
-            openButton.onClick.AddListener(() =>
-            {
-                Sfx.Play(sfx.Click);
-                panelGO.SetActive(true);
-            });
-        }
+    // 起動直後に最前面へ出すタイトル画面。「プレイ開始」を押すと消えて(裏側で既に表示されている)
+    // ブリーフィング画面が見えるようになる。UIルートの最後の子として作ることで最前面に描画させる。
+    private static void CreateTitleScreen(Transform canvasTransform, SfxSet sfx, SettingsUIController settingsUI)
+    {
+        GameObject panelGO = new GameObject("TitleScreenPanel", typeof(RectTransform));
+        panelGO.transform.SetParent(canvasTransform, false);
+        RectTransform panelRT = panelGO.GetComponent<RectTransform>();
+        panelRT.anchorMin = Vector2.zero;
+        panelRT.anchorMax = Vector2.one;
+        panelRT.offsetMin = Vector2.zero;
+        panelRT.offsetMax = Vector2.zero;
+        Image panelBg = panelGO.AddComponent<Image>();
+        panelBg.color = new Color(0.05f, 0.05f, 0.08f, 0.97f);
+
+        TitleScreenController title = panelGO.AddComponent<TitleScreenController>();
+        title.panelRoot = panelGO;
+        title.settingsUI = settingsUI;
+        title.clickSound = sfx.Click;
+
+        GameObject titleGO = CreateTMPText("TitleText", panelGO.transform, "Stock Crash Co.", 44f, TextAlignmentOptions.Center);
+        RectTransform titleRT = titleGO.GetComponent<RectTransform>();
+        titleRT.anchorMin = new Vector2(0.5f, 0.6f);
+        titleRT.anchorMax = new Vector2(0.5f, 0.6f);
+        titleRT.sizeDelta = new Vector2(700f, 80f);
+        titleRT.anchoredPosition = Vector2.zero;
+
+        GameObject subtitleGO = CreateTMPText("SubtitleText", panelGO.transform, "妨害と工作で株価を乱高下させろ", 18f, TextAlignmentOptions.Center);
+        RectTransform subtitleRT = subtitleGO.GetComponent<RectTransform>();
+        subtitleRT.anchorMin = new Vector2(0.5f, 0.6f);
+        subtitleRT.anchorMax = new Vector2(0.5f, 0.6f);
+        subtitleRT.sizeDelta = new Vector2(700f, 30f);
+        subtitleRT.anchoredPosition = new Vector2(0f, -50f);
+
+        Button startBtn = CreateButton("StartButton", panelGO.transform, "プレイ開始", new Color(0.2f, 0.6f, 0.3f));
+        RectTransform startBtnRT = startBtn.GetComponent<RectTransform>();
+        startBtnRT.anchorMin = new Vector2(0.5f, 0.5f);
+        startBtnRT.anchorMax = new Vector2(0.5f, 0.5f);
+        startBtnRT.sizeDelta = new Vector2(220f, 48f);
+        startBtnRT.anchoredPosition = new Vector2(0f, -110f);
+        title.startButton = startBtn;
+
+        Button settingsBtn = CreateButton("SettingsButton", panelGO.transform, "設定", new Color(0.35f, 0.35f, 0.4f));
+        RectTransform settingsBtnRT = settingsBtn.GetComponent<RectTransform>();
+        settingsBtnRT.anchorMin = new Vector2(0.5f, 0.5f);
+        settingsBtnRT.anchorMax = new Vector2(0.5f, 0.5f);
+        settingsBtnRT.sizeDelta = new Vector2(220f, 48f);
+        settingsBtnRT.anchoredPosition = new Vector2(0f, -170f);
+        title.settingsButton = settingsBtn;
+
+        Button quitBtn = CreateButton("QuitButton", panelGO.transform, "終了", new Color(0.5f, 0.25f, 0.25f));
+        RectTransform quitBtnRT = quitBtn.GetComponent<RectTransform>();
+        quitBtnRT.anchorMin = new Vector2(0.5f, 0.5f);
+        quitBtnRT.anchorMax = new Vector2(0.5f, 0.5f);
+        quitBtnRT.sizeDelta = new Vector2(220f, 48f);
+        quitBtnRT.anchoredPosition = new Vector2(0f, -230f);
+        title.quitButton = quitBtn;
     }
 
     private static void PositionTop(GameObject go, float topOffset, float height)
