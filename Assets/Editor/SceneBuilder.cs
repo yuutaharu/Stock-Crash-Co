@@ -16,6 +16,9 @@ public static class SceneBuilder
     private const string ScenePath = "Assets/Scenes/MainStage.unity";
     private const string RowPrefabPath = "Assets/Prefabs/CompanyTradeRow.prefab";
     private const string FloatingTextPrefabPath = "Assets/Prefabs/FloatingText.prefab";
+
+    // フィールドの一辺の半分。壁/床/建物配置は全てここを基準にする。
+    private const float MapHalfSize = 20f;
     // TMP標準の同梱フォント(Liberation Sans)は日本語グリフを含まないため、
     // Sawarabi Gothic(Assets/Fonts/Source, SIL Open Font License)から生成したTMPフォントアセットを
     // ここから読み込み、全UIに割り当てる。無ければCreateJapaneseFontAssetで自動生成する
@@ -24,6 +27,7 @@ public static class SceneBuilder
     private const string JapaneseFontAssetPath = "Assets/Fonts/UI JP SDF.asset";
 
     private static TMP_FontAsset s_JapaneseFont;
+
 
     [MenuItem("Tools/Stock Crash Co/1. Import TMP Essential Resources")]
     public static void ImportTMPEssentials()
@@ -71,6 +75,25 @@ public static class SceneBuilder
         FinishBatch(1);
     }
 
+    // City People (DenysAlmaral) はデフォルトでURP用シェーダーのマテリアルになっており、
+    // このプロジェクト(Built-in Render Pipeline)だとシェーダーが見つからずピンク色(missing shader)になる。
+    // アセット同梱の変換パッケージを適用してBuilt-in用マテリアルに直す(一度実行すれば恒久的に直る)。
+    [MenuItem("Tools/Stock Crash Co/3. Convert City People To Built-in")]
+    public static void ConvertCityPeopleToBuiltIn()
+    {
+        string packagePath = "Assets/DenysAlmaral/CityPeople/URP&Built-in/convert-to-BUILT-IN.unitypackage";
+        if (!File.Exists(packagePath))
+        {
+            Debug.LogError($"SceneBuilder: 変換パッケージが見つかりません: {packagePath}");
+            FinishBatch(1);
+            return;
+        }
+
+        AssetDatabase.importPackageCompleted += OnImportCompleted;
+        AssetDatabase.importPackageFailed += OnImportFailed;
+        AssetDatabase.ImportPackage(packagePath, false);
+    }
+
     [MenuItem("Tools/Stock Crash Co/2. Build MVP Stage")]
     public static void BuildStage()
     {
@@ -85,11 +108,23 @@ public static class SceneBuilder
         CreateLight();
         CreateFloor();
         CreateBoundaryWalls();
-        CreateCityBackdrop();
+
+        // マップの奥(北側, +Z)で向かい合わせ。手前(南側, -Z)には取引PCとスタート地点を置く。
+        Vector3 burgerPos = new Vector3(-8f, 0f, 13f);
+        Vector3 pizzaPos = new Vector3(8f, 0f, 13f);
+        Vector3 burgerLauncherPos = new Vector3(-14f, 1f, 13f);
+        Vector3 pizzaLauncherPos = new Vector3(14f, 1f, 13f);
+        Vector3 tradingPCPos = new Vector3(0f, 1f, -13f);
+
+        CreateCityBackdrop(
+            new ExclusionZone(tradingPCPos, 6f),
+            new ExclusionZone(burgerPos, 6f),
+            new ExclusionZone(pizzaPos, 6f),
+            new ExclusionZone(burgerLauncherPos, 4f),
+            new ExclusionZone(pizzaLauncherPos, 4f));
+
         MarketManager marketManager = CreateMarketManager();
 
-        Vector3 burgerPos = new Vector3(-6f, 0f, 5f);
-        Vector3 pizzaPos = new Vector3(6f, 0f, 5f);
         Company burger = CreateCompany("Burger Kingdom", 0, burgerPos, "Building_Fast Food", pizzaPos);
         Company pizza = CreateCompany("Pizza Palace", 1, pizzaPos, "Building_Pizza", burgerPos);
         burger.rival = pizza;
@@ -99,18 +134,21 @@ public static class SceneBuilder
         AddVisualFeedback(burger, floatingTextSpawner);
         AddVisualFeedback(pizza, floatingTextSpawner);
 
-        CreateRocketLauncher(new Vector3(-9f, 1f, 5f), burger);
-        CreateRocketLauncher(new Vector3(9f, 1f, 5f), pizza);
+        CreateRocketLauncher(burgerLauncherPos, burger);
+        CreateRocketLauncher(pizzaLauncherPos, pizza);
 
         CreateGameSessionManager(burger, pizza);
 
         Transform canvasTransform = CreateUIRoot();
         TradingUIController tradingUI = CreateTradingUI(canvasTransform);
         CreateBriefingAndResultUI(canvasTransform, burger, pizza);
-        CreateTradingPC(new Vector3(0f, 1f, -6f), tradingUI, burger, pizza);
-        GameObject player = CreatePlayer(new Vector3(0f, 1f, -5f));
-        player.transform.rotation = Quaternion.Euler(0f, 180f, 0f); // 取引PC(z=-6)の方を向いた状態でスタート
+        CreateTradingPC(tradingPCPos, tradingUI, burger, pizza);
+        GameObject player = CreatePlayer(new Vector3(0f, 1f, tradingPCPos.z + 1.5f));
+        player.transform.rotation = Quaternion.Euler(0f, 180f, 0f); // 取引PC(手前)の方を向いた状態でスタート
+        AddPlayerCharacterModel(player);
         CreateFirstPersonCamera(player.transform);
+
+        CreateNPCs(6);
 
         Directory.CreateDirectory(Path.GetDirectoryName(ScenePath));
         bool saved = EditorSceneManager.SaveScene(scene, ScenePath);
@@ -135,19 +173,59 @@ public static class SceneBuilder
 
     private static void CreateFloor()
     {
-        GameObject floor = GameObject.CreatePrimitive(PrimitiveType.Plane);
-        floor.name = "Floor";
-        floor.transform.position = Vector3.zero;
-        floor.transform.localScale = new Vector3(2f, 1f, 2f); // 20x20
-        ApplyColor(floor, new Color(0.5f, 0.55f, 0.5f));
+        // "Road Tile"は無地の舗装だけで道路標示が無かったため、実際に白線などが描かれた
+        // "Road Lane_01〜04"(いずれも20x20)を交互に敷いて道路らしく見せる。
+        const float roadTileSize = 20f;
+        string[] roadPrefabNames =
+        {
+            "Road Lane_01", "Road Lane_02", "Road Lane_03", "Road Lane_04",
+        };
+        string folder = "Assets/SimplePoly City - Low Poly Assets/Prefab/Roads";
+
+        GameObject firstAsset = AssetDatabase.LoadAssetAtPath<GameObject>($"{folder}/{roadPrefabNames[0]}.prefab");
+        if (firstAsset != null)
+        {
+            int tilesPerSide = Mathf.Max(1, Mathf.RoundToInt((MapHalfSize * 2f) / roadTileSize));
+            int tileIndex = 0;
+            for (int ix = 0; ix < tilesPerSide; ix++)
+            {
+                for (int iz = 0; iz < tilesPerSide; iz++)
+                {
+                    string prefabName = roadPrefabNames[tileIndex % roadPrefabNames.Length];
+                    tileIndex++;
+                    GameObject prefabAsset = AssetDatabase.LoadAssetAtPath<GameObject>($"{folder}/{prefabName}.prefab");
+                    if (prefabAsset == null) continue;
+
+                    GameObject tile = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset);
+                    tile.name = $"RoadTile_{ix}_{iz}";
+                    float x = -MapHalfSize + roadTileSize * 0.5f + roadTileSize * ix;
+                    float z = -MapHalfSize + roadTileSize * 0.5f + roadTileSize * iz;
+                    tile.transform.position = new Vector3(x, 0f, z);
+                }
+            }
+        }
+        else
+        {
+            Debug.LogWarning($"SceneBuilder: 道路タイルが見つかりません ({folder}/{roadPrefabNames[0]}.prefab)。代わりに床プリミティブを使います。");
+            GameObject fallback = GameObject.CreatePrimitive(PrimitiveType.Plane);
+            fallback.name = "Floor";
+            fallback.transform.localScale = new Vector3(MapHalfSize / 5f, 1f, MapHalfSize / 5f); // Plane既定10x10
+            ApplyColor(fallback, new Color(0.5f, 0.55f, 0.5f));
+        }
+
+        // タイル1枚ごとにコライダーは付いていないため、床全体を覆う共通のコライダーを1つ用意する。
+        GameObject floorCollider = new GameObject("FloorCollider");
+        BoxCollider bc = floorCollider.AddComponent<BoxCollider>();
+        bc.center = new Vector3(0f, -0.05f, 0f);
+        bc.size = new Vector3(MapHalfSize * 2f, 0.1f, MapHalfSize * 2f);
     }
 
     // 床の外周を壁で囲み、プレイヤーがフィールド外へ歩いて落下しないようにする。
     private static void CreateBoundaryWalls()
     {
-        const float half = 10f; // Floorの一辺20の半分
         const float wallHeight = 5f;
         const float wallThickness = 1f;
+        float half = MapHalfSize;
         Color wallColor = new Color(0.3f, 0.32f, 0.35f);
 
         CreateWall("Wall_North", new Vector3(0f, wallHeight / 2f, half), new Vector3(half * 2f + wallThickness, wallHeight, wallThickness), wallColor);
@@ -165,41 +243,53 @@ public static class SceneBuilder
         ApplyColor(wall, color);
     }
 
-    // 単なる壁だけだと味気ないので、SimplePoly City パックの建物をランダムに並べて街並みの背景にする。
-    // 東西の壁沿いはロケット砲/店舗があるため衝突を避け、何も置かれていない北(z=+10)と南(z=-10)側だけに置く。
+    // 単なる壁だけだと味気ないので、フィールドの外周をマンション(住宅)だけで隙間なく囲む。
+    // 店舗/ロケット砲/取引PCの近くだけは除外ゾーンとして避ける。
     // (壁自体のコライダーは既にCreateBoundaryWallsで用意済みなので、こちらは見た目だけ・衝突防止の保険を兼ねる)
     private static readonly string[] BackdropBuildingNames =
     {
-        "Building_Bakery", "Building_Bar", "Building_Books Shop", "Building_Chicken Shop",
-        "Building_Clothing", "Building_Coffee Shop", "Building_Drug Store", "Building_Gift Shop",
-        "Building_Music Store", "Building_Shoes Shop", "Building_Super Market",
         "Building_Residential_color01", "Building_Residential_color02", "Building_Residential_color03",
-        "Building Sky_small_color01", "Building Sky_small_color02", "Building Sky_small_color03",
     };
-    private const float BackdropTargetFootprint = 4.5f;
+    private const float BackdropTargetFootprint = 4f;
 
-    private static void CreateCityBackdrop()
+    private readonly struct ExclusionZone
     {
-        const float half = 10f; // Floorの一辺20の半分
-        const float rowZ = 9.3f; // 店舗/PCの領域と被らないよう壁のすぐ内側
-        const float spacing = 5f;
+        public readonly Vector3 Center;
+        public readonly float Radius;
+        public ExclusionZone(Vector3 center, float radius) { Center = center; Radius = radius; }
+    }
 
-        int countPerSide = Mathf.Max(1, Mathf.FloorToInt((half * 2f) / spacing));
+    private static void CreateCityBackdrop(params ExclusionZone[] exclusionZones)
+    {
+        const float wallInset = 1.2f; // 壁のすぐ内側
+        const float footprint = BackdropTargetFootprint;
+        const float step = footprint * 1.02f; // わずかな余白だけ持たせてほぼ隙間なく並べる
+        float ringPos = MapHalfSize - wallInset;
+
+        int countPerSide = Mathf.Max(1, Mathf.FloorToInt((MapHalfSize * 2f) / step));
         int index = 0;
         for (int i = 0; i < countPerSide; i++)
         {
-            float x = -half + spacing * 0.5f + spacing * i;
-            PlaceBackdropBuilding(new Vector3(x, 0f, rowZ), 180f, ref index);   // 北側の壁沿い(内側=南向き)
-            PlaceBackdropBuilding(new Vector3(x, 0f, -rowZ), 0f, ref index);    // 南側の壁沿い(内側=北向き)
+            float coord = -MapHalfSize + step * 0.5f + step * i;
+            TryPlaceBackdropBuilding(new Vector3(coord, 0f, ringPos), 180f, footprint, exclusionZones, ref index);   // 北
+            TryPlaceBackdropBuilding(new Vector3(coord, 0f, -ringPos), 0f, footprint, exclusionZones, ref index);    // 南
+            TryPlaceBackdropBuilding(new Vector3(ringPos, 0f, coord), -90f, footprint, exclusionZones, ref index);   // 東
+            TryPlaceBackdropBuilding(new Vector3(-ringPos, 0f, coord), 90f, footprint, exclusionZones, ref index);   // 西
         }
     }
 
-    private static void PlaceBackdropBuilding(Vector3 position, float yRotation, ref int index)
+    private static void TryPlaceBackdropBuilding(Vector3 position, float yRotation, float footprint, ExclusionZone[] exclusionZones, ref int index)
     {
+        foreach (ExclusionZone zone in exclusionZones)
+        {
+            float dist = Vector2.Distance(new Vector2(position.x, position.z), new Vector2(zone.Center.x, zone.Center.z));
+            if (dist < zone.Radius + footprint * 0.5f) return; // 除外ゾーンに掛かるので置かない
+        }
+
         string prefabName = BackdropBuildingNames[index % BackdropBuildingNames.Length];
         index++;
 
-        GameObject building = InstantiateBuilding(prefabName, $"Backdrop_{prefabName}_{index}", position, BackdropTargetFootprint);
+        GameObject building = InstantiateBuilding(prefabName, $"Backdrop_{prefabName}_{index}", position, footprint);
         building.transform.rotation = Quaternion.Euler(0f, yRotation, 0f);
 
         Bounds b = GetLocalBounds(building);
@@ -560,6 +650,67 @@ public static class SceneBuilder
         camGO.AddComponent<Camera>();
         camGO.AddComponent<AudioListener>();
         camGO.AddComponent<FirstPersonLook>();
+    }
+
+    // City People (DenysAlmaral) アセットのキャラクターを、路上を歩き回るだけのNPCとして配置する。
+    private const string CityPeopleFolder = "Assets/DenysAlmaral/CityPeople/Prefabs";
+    private static readonly string[] NPCPrefabRelativePaths =
+    {
+        "city/casual_Male_G", "city/casual_Female_G",
+        "downtown/casual_Male_K", "downtown/casual_Female_K",
+    };
+
+    private static void CreateNPCs(int count)
+    {
+        // 取引PC・店舗・ロケット砲の手前/奥を避けた、マップ中央の通り部分を徘徊エリアにする。
+        Vector2 areaMin = new Vector2(-15f, -8f);
+        Vector2 areaMax = new Vector2(15f, 8f);
+
+        for (int i = 0; i < count; i++)
+        {
+            string relPath = NPCPrefabRelativePaths[i % NPCPrefabRelativePaths.Length];
+            string path = $"{CityPeopleFolder}/{relPath}.prefab";
+            GameObject prefabAsset = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            if (prefabAsset == null)
+            {
+                Debug.LogWarning($"SceneBuilder: NPCプレハブが見つかりません ({path})。");
+                continue;
+            }
+
+            GameObject npc = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset);
+            npc.name = $"NPC_{i}_{prefabAsset.name}";
+            npc.transform.position = new Vector3(
+                Random.Range(areaMin.x, areaMax.x), 0f, Random.Range(areaMin.y, areaMax.y));
+            npc.transform.rotation = Quaternion.Euler(0f, Random.Range(0f, 360f), 0f);
+
+            NPCWanderer wanderer = npc.AddComponent<NPCWanderer>();
+            wanderer.areaMinXZ = areaMin;
+            wanderer.areaMaxXZ = areaMax;
+            wanderer.moveSpeed = Random.Range(1.0f, 1.6f);
+        }
+    }
+
+    // プレイヤー自身の見た目(一人称なので自分のカメラには映さない)をCity Peopleのキャラクターにする。
+    private static void AddPlayerCharacterModel(GameObject player)
+    {
+        string path = $"{CityPeopleFolder}/city/casual_Male_G.prefab";
+        GameObject prefabAsset = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+        if (prefabAsset == null)
+        {
+            Debug.LogWarning($"SceneBuilder: プレイヤー用モデルが見つかりません ({path})。");
+            return;
+        }
+
+        GameObject model = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset, player.transform);
+        model.name = "CharacterModel";
+        model.transform.localPosition = new Vector3(0f, -1f, 0f); // カプセル中心(y=1)から見た足元
+        model.transform.localRotation = Quaternion.identity;
+
+        // 一人称視点では自分の姿は見えなくてよい(将来的にマルチプレイ等で他人から見える用に残す)。
+        foreach (Renderer r in model.GetComponentsInChildren<Renderer>())
+        {
+            r.enabled = false;
+        }
     }
 
     private static Transform CreateUIRoot()
