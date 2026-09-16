@@ -16,6 +16,22 @@ public class Company : MonoBehaviour
     public float dirtiness = 0f;
     public float popularity = 0f;
 
+    // 店ごとの経済性格。ブリーフィングでどちらを選ぶか意味を持たせるための非対称パラメータ
+    // (例: バーガーは基準株価が高く値動きが緩やかな安定型、ピザは基準株価が安く値動きが激しい
+    // ハイリスク型、といった味付けをSceneBuilder側で行う)。
+    [Header("経済性格(店ごとに非対称)")]
+    public float popularityMultiplier = 2f;
+    public float dirtinessMultiplier = 3f;
+    // ブリーフィング画面の企業選択ボタンに表示する、性格を一言で表すラベル(例:「安定型」)
+    public string flavorLabel = "";
+
+    // 敵工作員(EnemySaboteur)がこの企業を狙う時の激しさ。値動きの倍率と合わせて
+    // ハイリスク型の店ほど敵も頻繁かつ強めに来る、という一貫した性格付けに使う。
+    [Header("敵工作員の激しさ(店ごとに非対称)")]
+    public float enemyStrikeIntervalMin = 10f;
+    public float enemyStrikeIntervalMax = 18f;
+    public float enemyDirtAmount = 8f;
+
     // 競合企業への参照。株価は自社の評判と相手の評判の"差"で決まるため、
     // 片方を汚す/掃除すると、その分だけもう片方の株価が逆向きに動く(合計が一定のゼロサム)。
     [Header("競合企業")]
@@ -85,8 +101,8 @@ public class Company : MonoBehaviour
             return;
         }
 
-        float ownScore = (popularity * 2.0f) - (dirtiness * 3.0f);
-        float rivalScore = rival != null ? (rival.popularity * 2.0f) - (rival.dirtiness * 3.0f) : 0f;
+        float ownScore = (popularity * popularityMultiplier) - (dirtiness * dirtinessMultiplier);
+        float rivalScore = rival != null ? (rival.popularity * rival.popularityMultiplier) - (rival.dirtiness * rival.dirtinessMultiplier) : 0f;
         float priceModifier = ownScore - rivalScore;
         currentPrice = Mathf.Max(1.0f, basePrice + priceModifier);
     }

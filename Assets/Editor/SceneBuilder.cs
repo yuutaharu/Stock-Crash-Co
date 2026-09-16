@@ -166,8 +166,25 @@ public static class SceneBuilder
 
         MarketManager marketManager = CreateMarketManager();
 
-        Company burger = CreateCompany("Burger Kingdom", 0, burgerPos, "Building_Fast Food", pizzaPos);
-        Company pizza = CreateCompany("Pizza Palace", 1, pizzaPos, "Building_Pizza", burgerPos);
+        // 2社は経済性格が非対称になるよう作る(選ぶ理由を持たせるため)。
+        // バーガー・キングダム=安定型: 基準株価は高いが値動きが緩やか、敵工作員もおとなしめ。
+        // ピザ・パレス=ハイリスク型: 基準株価は安いが値動きが激しく、敵工作員も頻繁かつ強め。
+        Company burger = CreateCompany("Burger Kingdom", 0, burgerPos, "Building_Fast Food", pizzaPos, basePrice: 140f);
+        burger.popularityMultiplier = 1.5f;
+        burger.dirtinessMultiplier = 2.0f;
+        burger.enemyStrikeIntervalMin = 14f;
+        burger.enemyStrikeIntervalMax = 22f;
+        burger.enemyDirtAmount = 6f;
+        burger.flavorLabel = "安定型・敵はおとなしめ";
+
+        Company pizza = CreateCompany("Pizza Palace", 1, pizzaPos, "Building_Pizza", burgerPos, basePrice: 70f);
+        pizza.popularityMultiplier = 3.0f;
+        pizza.dirtinessMultiplier = 4.0f;
+        pizza.enemyStrikeIntervalMin = 7f;
+        pizza.enemyStrikeIntervalMax = 12f;
+        pizza.enemyDirtAmount = 10f;
+        pizza.flavorLabel = "ハイリスク型・敵が激しい";
+
         burger.rival = pizza;
         pizza.rival = burger;
 
@@ -206,6 +223,7 @@ public static class SceneBuilder
         CreatePickups(sfx);
 
         CreateNPCs(6);
+        CreateEnemySaboteur(new Vector3(0f, 0f, 5f), sfx.Dirt);
 
         Directory.CreateDirectory(Path.GetDirectoryName(ScenePath));
         bool saved = EditorSceneManager.SaveScene(scene, ScenePath);
@@ -389,7 +407,7 @@ public static class SceneBuilder
     // ここを90度単位で調整する(0/90/180/270)。両店舗で共通のモデル群を使っている前提。
     private const float ShopFrontOffsetDegrees = 0f;
 
-    private static Company CreateCompany(string companyName, int id, Vector3 position, string buildingPrefabFileName, Vector3 facePosition)
+    private static Company CreateCompany(string companyName, int id, Vector3 position, string buildingPrefabFileName, Vector3 facePosition, float basePrice)
     {
         GameObject shop = InstantiateBuilding(buildingPrefabFileName, companyName, position, ShopTargetFootprint);
 
@@ -419,8 +437,8 @@ public static class SceneBuilder
         Company company = shop.AddComponent<Company>();
         company.companyId = id;
         company.companyName = companyName;
-        company.basePrice = 100f;
-        company.currentPrice = 100f;
+        company.basePrice = basePrice;
+        company.currentPrice = basePrice;
 
         AddNameLabel(shop.transform, companyName, localBounds);
         return company;
@@ -979,6 +997,40 @@ public static class SceneBuilder
         }
     }
 
+    // 敵工作員。放っておくとプレイヤー側の担当企業を汚しに来る簡易AI(EnemySaboteur.cs)を付ける。
+    // 通行人のNPCと見分けが付くよう、モデルを赤系のシルエットに塗り替えてラベルを付ける。
+    private static void CreateEnemySaboteur(Vector3 homePosition, AudioClip throwSound)
+    {
+        string path = $"{CityPeopleFolder}/downtown/casual_Male_K.prefab";
+        GameObject prefabAsset = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+        if (prefabAsset == null)
+        {
+            Debug.LogWarning($"SceneBuilder: 敵工作員用モデルが見つかりません ({path})。");
+            return;
+        }
+
+        GameObject enemy = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset);
+        enemy.name = "EnemySaboteur";
+        enemy.transform.position = homePosition;
+        ApplyColorToHierarchy(enemy, new Color(0.6f, 0.08f, 0.08f));
+
+        EnemySaboteur ai = enemy.AddComponent<EnemySaboteur>();
+        ai.homePosition = homePosition;
+        ai.throwSound = throwSound;
+
+        GameObject label = new GameObject("EnemyLabel");
+        label.transform.SetParent(enemy.transform, false);
+        label.transform.localPosition = new Vector3(0f, 2.0f, 0f);
+        TextMeshPro labelTMP = label.AddComponent<TextMeshPro>();
+        labelTMP.text = "妨害工作員";
+        labelTMP.fontSize = 3f;
+        labelTMP.alignment = TextAlignmentOptions.Center;
+        labelTMP.color = new Color(1f, 0.3f, 0.3f);
+        if (s_JapaneseFont != null) labelTMP.font = s_JapaneseFont;
+        RectTransform labelRT = label.GetComponent<RectTransform>();
+        if (labelRT != null) labelRT.sizeDelta = new Vector2(3f, 0.8f);
+    }
+
     // プレイヤー自身の見た目(一人称なので自分のカメラには映さない)をCity Peopleのキャラクターにする。
     private static void AddPlayerCharacterModel(GameObject player)
     {
@@ -1109,7 +1161,7 @@ public static class SceneBuilder
         companyButtonsRT.anchorMax = new Vector2(1f, 1f);
         companyButtonsRT.pivot = new Vector2(0.5f, 1f);
         companyButtonsRT.anchoredPosition = new Vector2(0f, -172f);
-        companyButtonsRT.sizeDelta = new Vector2(-40f, 44f);
+        companyButtonsRT.sizeDelta = new Vector2(-40f, 72f);
         HorizontalLayoutGroup companyButtonsHLG = companyButtonsRow.AddComponent<HorizontalLayoutGroup>();
         companyButtonsHLG.spacing = 12f;
         companyButtonsHLG.childControlWidth = true;
@@ -1117,16 +1169,20 @@ public static class SceneBuilder
         companyButtonsHLG.childControlHeight = true;
         companyButtonsHLG.childForceExpandHeight = true;
 
+        // ボタンに社名だけでなく基準株価と性格(安定型/ハイリスク型)も表示し、
+        // どちらを選ぶか意味のある判断材料になるようにする。
         Button[] companyButtons = new Button[selectableCompanies.Length];
         for (int i = 0; i < selectableCompanies.Length; i++)
         {
             Color color = i == 0 ? new Color(0.7f, 0.35f, 0.2f) : new Color(0.8f, 0.65f, 0.2f);
-            companyButtons[i] = CreateButton($"CompanyButton_{i}", companyButtonsRow.transform, selectableCompanies[i].companyName, color);
+            Company c = selectableCompanies[i];
+            string label = $"{c.companyName}\n基準株価 ${c.basePrice:F0}\n{c.flavorLabel}";
+            companyButtons[i] = CreateButton($"CompanyButton_{i}", companyButtonsRow.transform, label, color);
         }
         briefing.companyButtons = companyButtons;
 
         GameObject selectedCompanyGO = CreateTMPText("SelectedCompanyText", briefingGO.transform, "担当企業を選んでください", 18f, TextAlignmentOptions.Center);
-        PositionTop(selectedCompanyGO, 224f, 28f);
+        PositionTop(selectedCompanyGO, 256f, 28f);
         briefing.selectedCompanyText = selectedCompanyGO.GetComponent<TextMeshProUGUI>();
 
         Button startBtn = CreateButton("StartButton", briefingGO.transform, "開始", new Color(0.2f, 0.6f, 0.3f));
@@ -1418,7 +1474,7 @@ public static class SceneBuilder
     {
         GameObject rowGO = new GameObject("CompanyTradeRow", typeof(RectTransform));
         LayoutElement rowLE = rowGO.AddComponent<LayoutElement>();
-        rowLE.preferredHeight = 150f;
+        rowLE.preferredHeight = 180f;
         Image rowBg = rowGO.AddComponent<Image>();
         rowBg.color = new Color(1f, 1f, 1f, 0.08f);
 
@@ -1441,6 +1497,30 @@ public static class SceneBuilder
 
         GameObject posGO = CreateTMPText("PositionText", rowGO.transform, "保有: 0株", 16f, TextAlignmentOptions.Left);
         rowScript.positionText = posGO.GetComponent<TextMeshProUGUI>();
+
+        // 売買する株数をバーで選ぶ行(スライダー + 現在値の表示)。
+        GameObject amountRow = new GameObject("AmountRow", typeof(RectTransform));
+        amountRow.transform.SetParent(rowGO.transform, false);
+        HorizontalLayoutGroup amountHLG = amountRow.AddComponent<HorizontalLayoutGroup>();
+        amountHLG.spacing = 6f;
+        amountHLG.childControlWidth = true;
+        amountHLG.childForceExpandWidth = false;
+        amountHLG.childControlHeight = true;
+        amountHLG.childForceExpandHeight = true;
+        LayoutElement amountRowLE = amountRow.AddComponent<LayoutElement>();
+        amountRowLE.preferredHeight = 24f;
+
+        Slider amountSlider = CreateSlider("AmountSlider", amountRow.transform);
+        LayoutElement sliderLE = amountSlider.gameObject.AddComponent<LayoutElement>();
+        sliderLE.flexibleWidth = 1f;
+        sliderLE.preferredHeight = 20f;
+        rowScript.amountSlider = amountSlider;
+
+        GameObject amountTextGO = CreateTMPText("AmountText", amountRow.transform, "0株", 14f, TextAlignmentOptions.Right);
+        LayoutElement amountTextLE = amountTextGO.GetComponent<LayoutElement>();
+        amountTextLE.preferredWidth = 56f;
+        amountTextLE.preferredHeight = 24f;
+        rowScript.amountText = amountTextGO.GetComponent<TextMeshProUGUI>();
 
         GameObject buttonsRow = new GameObject("Buttons", typeof(RectTransform));
         buttonsRow.transform.SetParent(rowGO.transform, false);
@@ -1677,6 +1757,18 @@ public static class SceneBuilder
         Shader shader = Shader.Find("Standard") ?? Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Sprites/Default");
         Material mat = new Material(shader) { color = color };
         renderer.sharedMaterial = mat;
+    }
+
+    // ApplyColorの、階層内の全Rendererに一括適用する版。既存アセットのモデルを単色シルエットに
+    // 塗り替えて目立たせたい時に使う(敵工作員を通行人のNPCと見分けやすくするため等)。
+    private static void ApplyColorToHierarchy(GameObject go, Color color)
+    {
+        Shader shader = Shader.Find("Standard") ?? Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Sprites/Default");
+        Material mat = new Material(shader) { color = color };
+        foreach (Renderer renderer in go.GetComponentsInChildren<Renderer>())
+        {
+            renderer.sharedMaterial = mat;
+        }
     }
 
     private static void AddSceneToBuildSettings(string path)
