@@ -148,6 +148,31 @@ public class GameSessionManager : MonoBehaviour
         BroadcastPhase();
     }
 
+    // リザルト画面の「もう一度」ボタンから呼ぶ想定。ホストのみ実行できる。
+    // 店舗・資金・企業選択を全て初期状態に戻し、ブリーフィングへ戻す。
+    public void ResetForNewMatch()
+    {
+        if (!IsHost()) return;
+
+        MoneyGoalReached = false;
+        selectedCompany = null;
+        rivalCompany = null;
+        RemainingTime = matchDurationSeconds;
+
+        if (MarketManager.Instance != null) MarketManager.Instance.ResetForNewMatch();
+
+        if (targetCompanies != null)
+        {
+            foreach (Company company in targetCompanies)
+            {
+                if (company != null) company.ResetForNewMatch();
+            }
+        }
+
+        SetPhase(GamePhase.Briefing, won: false);
+        BroadcastPhase();
+    }
+
     private void SetPhase(GamePhase phase, bool won)
     {
         CurrentPhase = phase;

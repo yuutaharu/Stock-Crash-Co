@@ -79,6 +79,7 @@ public class CompanyVisualFeedback : MonoBehaviour
         {
             lastBankrupt = company.isBankrupt;
             if (lastBankrupt) HandleBankrupt();
+            else if (bankruptEffect != null) bankruptEffect.SetActive(false);
         }
     }
 

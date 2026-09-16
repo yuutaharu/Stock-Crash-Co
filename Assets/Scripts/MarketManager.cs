@@ -37,10 +37,12 @@ public class MarketManager : MonoBehaviour
     private float lastBroadcastMoney = float.NaN;
 
     private bool hostChangeHooked = false;
+    private float initialMoney;
 
     void Awake()
     {
         Instance = this;
+        initialMoney = playerMoney;
     }
 
     void OnDestroy()
@@ -138,5 +140,13 @@ public class MarketManager : MonoBehaviour
     public void ApplyNetworkPosition(int companyId, int boughtShares)
     {
         GetOrCreatePosition(companyId).boughtShares = boughtShares;
+    }
+
+    // もう一度遊ぶ際に呼ばれる。資金・保有ポジションを初期状態に戻す。
+    public void ResetForNewMatch()
+    {
+        playerMoney = initialMoney;
+        positions.Clear();
+        lastBroadcastMoney = float.NaN;
     }
 }

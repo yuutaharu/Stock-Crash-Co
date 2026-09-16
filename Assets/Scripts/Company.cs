@@ -162,4 +162,18 @@ public class Company : MonoBehaviour
         isBankrupt = true;
         currentPrice = 0f;
     }
+
+    // もう一度遊ぶ際に呼ばれる。店舗の状態を初期値に戻し、投げつけられて張り付いたゴミも全て消す。
+    public void ResetForNewMatch()
+    {
+        dirtiness = 0f;
+        popularity = 0f;
+        isBankrupt = false;
+        currentPrice = basePrice;
+
+        foreach (TrashMarker marker in GetComponentsInChildren<TrashMarker>())
+        {
+            Destroy(marker.gameObject);
+        }
+    }
 }

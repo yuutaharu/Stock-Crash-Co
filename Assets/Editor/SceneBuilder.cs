@@ -148,7 +148,7 @@ public static class SceneBuilder
         CreateLight();
         CreateFloor();
         CreateBoundaryWalls();
-        CreateMusicPlayer(sfx.Bgm);
+        MusicPlayer musicPlayer = CreateMusicPlayer(sfx.Bgm);
 
         // マップの奥(北側, +Z)で向かい合わせ。手前(南側, -Z)には取引PCとスタート地点を置く。
         Vector3 burgerPos = new Vector3(-8f, 0f, 13f);
@@ -182,12 +182,14 @@ public static class SceneBuilder
 
         Transform canvasTransform = CreateUIRoot();
         TradingUIController tradingUI = CreateTradingUI(canvasTransform, sfx);
-        CreateBriefingAndResultUI(canvasTransform, sfx, burger, pizza);
+        CreateBriefingAndResultUI(canvasTransform, sfx, out Button openSettingsButton, burger, pizza);
         CreateTradingPC(tradingPCPos, tradingUI, burger, pizza);
         GameObject player = CreatePlayer(new Vector3(0f, 1f, tradingPCPos.z + 1.5f));
         player.transform.rotation = Quaternion.Euler(0f, 180f, 0f); // 取引PC(手前)の方を向いた状態でスタート
         AddPlayerCharacterModel(player);
         GameObject fpsCamera = CreateFirstPersonCamera(player.transform);
+        FirstPersonLook firstPersonLook = fpsCamera.GetComponent<FirstPersonLook>();
+        CreateSettingsUI(canvasTransform, sfx, musicPlayer, firstPersonLook, openSettingsButton);
 
         GameObject trashPrefab = CreateTrashPrefab(sfx);
         PlayerController playerController = player.GetComponent<PlayerController>();
@@ -217,12 +219,13 @@ public static class SceneBuilder
         lightGO.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
     }
 
-    private static void CreateMusicPlayer(AudioClip bgm)
+    private static MusicPlayer CreateMusicPlayer(AudioClip bgm)
     {
         GameObject go = new GameObject("MusicPlayer");
         MusicPlayer player = go.AddComponent<MusicPlayer>();
         player.musicClip = bgm;
         player.volume = 0.4f;
+        return player;
     }
 
     private static void CreateFloor()
@@ -952,7 +955,7 @@ public static class SceneBuilder
         return tradingUI;
     }
 
-    private static void CreateBriefingAndResultUI(Transform canvasTransform, SfxSet sfx, params Company[] selectableCompanies)
+    private static void CreateBriefingAndResultUI(Transform canvasTransform, SfxSet sfx, out Button openSettingsButton, params Company[] selectableCompanies)
     {
         GamePhaseUIRouter router = canvasTransform.GetComponent<GamePhaseUIRouter>();
 
@@ -1030,6 +1033,14 @@ public static class SceneBuilder
         waitingGO.SetActive(false);
         briefing.waitingForHostLabel = waitingGO;
 
+        openSettingsButton = CreateButton("SettingsButton", briefingGO.transform, "設定", new Color(0.35f, 0.35f, 0.4f));
+        RectTransform settingsBtnRT = openSettingsButton.GetComponent<RectTransform>();
+        settingsBtnRT.anchorMin = new Vector2(1f, 1f);
+        settingsBtnRT.anchorMax = new Vector2(1f, 1f);
+        settingsBtnRT.pivot = new Vector2(1f, 1f);
+        settingsBtnRT.sizeDelta = new Vector2(80f, 32f);
+        settingsBtnRT.anchoredPosition = new Vector2(-12f, -12f);
+
         if (router != null) router.briefingPanel = briefingGO;
 
         // --- リザルトパネル ---
@@ -1038,13 +1049,14 @@ public static class SceneBuilder
         RectTransform resultRT = resultGO.GetComponent<RectTransform>();
         resultRT.anchorMin = new Vector2(0.5f, 0.5f);
         resultRT.anchorMax = new Vector2(0.5f, 0.5f);
-        resultRT.sizeDelta = new Vector2(480f, 220f);
+        resultRT.sizeDelta = new Vector2(480f, 300f);
         Image resultBg = resultGO.AddComponent<Image>();
         resultBg.color = new Color(0f, 0f, 0f, 0.85f);
 
         ResultUIController result = resultGO.AddComponent<ResultUIController>();
         result.winSound = sfx.Win;
         result.loseSound = sfx.Lose;
+        result.clickSound = sfx.Click;
 
         GameObject resultTitleGO = CreateTMPText("ResultTitleText", resultGO.transform, "", 28f, TextAlignmentOptions.Center);
         PositionTop(resultTitleGO, 30f, 40f);
@@ -1053,6 +1065,15 @@ public static class SceneBuilder
         GameObject finalMoneyGO = CreateTMPText("FinalMoneyText", resultGO.transform, "", 18f, TextAlignmentOptions.Center);
         PositionTop(finalMoneyGO, 90f, 30f);
         result.finalMoneyText = finalMoneyGO.GetComponent<TextMeshProUGUI>();
+
+        Button playAgainBtn = CreateButton("PlayAgainButton", resultGO.transform, "もう一度あそぶ", new Color(0.2f, 0.6f, 0.3f));
+        RectTransform playAgainRT = playAgainBtn.GetComponent<RectTransform>();
+        playAgainRT.anchorMin = new Vector2(0.5f, 0f);
+        playAgainRT.anchorMax = new Vector2(0.5f, 0f);
+        playAgainRT.pivot = new Vector2(0.5f, 0f);
+        playAgainRT.sizeDelta = new Vector2(220f, 48f);
+        playAgainRT.anchoredPosition = new Vector2(0f, 30f);
+        result.playAgainButton = playAgainBtn;
 
         resultGO.SetActive(false);
         if (router != null) router.resultPanel = resultGO;
@@ -1147,6 +1168,63 @@ public static class SceneBuilder
         gaugeHud.panel = gaugePanelGO;
         gaugeHud.fillImage = gaugeFill;
         gaugePanelGO.SetActive(false);
+    }
+
+    // SFX/BGM音量とマウス感度を調整するオプションパネル。ブリーフィング画面の「設定」ボタンから開く。
+    private static void CreateSettingsUI(Transform canvasTransform, SfxSet sfx, MusicPlayer musicPlayer, FirstPersonLook firstPersonLook, Button openButton)
+    {
+        GameObject panelGO = new GameObject("SettingsPanel", typeof(RectTransform));
+        panelGO.transform.SetParent(canvasTransform, false);
+        RectTransform panelRT = panelGO.GetComponent<RectTransform>();
+        panelRT.anchorMin = new Vector2(0.5f, 0.5f);
+        panelRT.anchorMax = new Vector2(0.5f, 0.5f);
+        panelRT.sizeDelta = new Vector2(420f, 320f);
+        Image panelBg = panelGO.AddComponent<Image>();
+        panelBg.color = new Color(0f, 0f, 0f, 0.9f);
+
+        SettingsUIController settings = panelGO.AddComponent<SettingsUIController>();
+        settings.musicPlayer = musicPlayer;
+        settings.firstPersonLook = firstPersonLook;
+
+        PositionTop(CreateTMPText("Title", panelGO.transform, "設定", 24f, TextAlignmentOptions.Center), 16f, 32f);
+
+        GameObject sfxLabelGO = CreateTMPText("SfxLabel", panelGO.transform, "効果音の音量", 16f, TextAlignmentOptions.Left);
+        PositionTop(sfxLabelGO, 70f, 24f);
+        Slider sfxSlider = CreateSlider("SfxSlider", panelGO.transform);
+        PositionTop(sfxSlider.gameObject, 96f, 24f);
+        settings.sfxVolumeSlider = sfxSlider;
+
+        GameObject bgmLabelGO = CreateTMPText("BgmLabel", panelGO.transform, "BGMの音量", 16f, TextAlignmentOptions.Left);
+        PositionTop(bgmLabelGO, 140f, 24f);
+        Slider bgmSlider = CreateSlider("BgmSlider", panelGO.transform);
+        PositionTop(bgmSlider.gameObject, 166f, 24f);
+        settings.bgmVolumeSlider = bgmSlider;
+
+        GameObject sensLabelGO = CreateTMPText("SensitivityLabel", panelGO.transform, "マウス感度", 16f, TextAlignmentOptions.Left);
+        PositionTop(sensLabelGO, 210f, 24f);
+        Slider sensSlider = CreateSlider("SensitivitySlider", panelGO.transform);
+        PositionTop(sensSlider.gameObject, 236f, 24f);
+        settings.mouseSensitivitySlider = sensSlider;
+
+        Button closeBtn = CreateButton("CloseButton", panelGO.transform, "閉じる", new Color(0.4f, 0.4f, 0.45f));
+        RectTransform closeBtnRT = closeBtn.GetComponent<RectTransform>();
+        closeBtnRT.anchorMin = new Vector2(0.5f, 0f);
+        closeBtnRT.anchorMax = new Vector2(0.5f, 0f);
+        closeBtnRT.pivot = new Vector2(0.5f, 0f);
+        closeBtnRT.sizeDelta = new Vector2(140f, 40f);
+        closeBtnRT.anchoredPosition = new Vector2(0f, 20f);
+        settings.closeButton = closeBtn;
+
+        panelGO.SetActive(false);
+
+        if (openButton != null)
+        {
+            openButton.onClick.AddListener(() =>
+            {
+                Sfx.Play(sfx.Click);
+                panelGO.SetActive(true);
+            });
+        }
     }
 
     private static void PositionTop(GameObject go, float topOffset, float height)
@@ -1249,6 +1327,69 @@ public static class SceneBuilder
         textRT.offsetMax = Vector2.zero;
 
         return btn;
+    }
+
+    // 一般的なUnity UIのSlider階層(Background / Fill Area>Fill / Handle Slide Area>Handle)を組み立てる。
+    private static Slider CreateSlider(string name, Transform parent)
+    {
+        GameObject go = new GameObject(name, typeof(RectTransform));
+        go.transform.SetParent(parent, false);
+        RectTransform rt = go.GetComponent<RectTransform>();
+        rt.sizeDelta = new Vector2(0f, 20f);
+
+        GameObject bgGO = new GameObject("Background", typeof(RectTransform));
+        bgGO.transform.SetParent(go.transform, false);
+        Image bgImg = bgGO.AddComponent<Image>();
+        bgImg.color = new Color(1f, 1f, 1f, 0.15f);
+        RectTransform bgRT = bgGO.GetComponent<RectTransform>();
+        bgRT.anchorMin = new Vector2(0f, 0.25f);
+        bgRT.anchorMax = new Vector2(1f, 0.75f);
+        bgRT.offsetMin = Vector2.zero;
+        bgRT.offsetMax = Vector2.zero;
+
+        GameObject fillAreaGO = new GameObject("Fill Area", typeof(RectTransform));
+        fillAreaGO.transform.SetParent(go.transform, false);
+        RectTransform fillAreaRT = fillAreaGO.GetComponent<RectTransform>();
+        fillAreaRT.anchorMin = new Vector2(0f, 0.25f);
+        fillAreaRT.anchorMax = new Vector2(1f, 0.75f);
+        fillAreaRT.offsetMin = new Vector2(5f, 0f);
+        fillAreaRT.offsetMax = new Vector2(-5f, 0f);
+
+        GameObject fillGO = new GameObject("Fill", typeof(RectTransform));
+        fillGO.transform.SetParent(fillAreaGO.transform, false);
+        Image fillImg = fillGO.AddComponent<Image>();
+        fillImg.color = new Color(0.3f, 0.65f, 0.9f);
+        RectTransform fillRT = fillGO.GetComponent<RectTransform>();
+        fillRT.anchorMin = new Vector2(0f, 0f);
+        fillRT.anchorMax = new Vector2(1f, 1f);
+        fillRT.offsetMin = Vector2.zero;
+        fillRT.offsetMax = Vector2.zero;
+
+        GameObject handleAreaGO = new GameObject("Handle Slide Area", typeof(RectTransform));
+        handleAreaGO.transform.SetParent(go.transform, false);
+        RectTransform handleAreaRT = handleAreaGO.GetComponent<RectTransform>();
+        handleAreaRT.anchorMin = new Vector2(0f, 0f);
+        handleAreaRT.anchorMax = new Vector2(1f, 1f);
+        handleAreaRT.offsetMin = new Vector2(10f, 0f);
+        handleAreaRT.offsetMax = new Vector2(-10f, 0f);
+
+        GameObject handleGO = new GameObject("Handle", typeof(RectTransform));
+        handleGO.transform.SetParent(handleAreaGO.transform, false);
+        Image handleImg = handleGO.AddComponent<Image>();
+        handleImg.color = Color.white;
+        RectTransform handleRT = handleGO.GetComponent<RectTransform>();
+        handleRT.sizeDelta = new Vector2(16f, 20f);
+
+        Slider slider = go.AddComponent<Slider>();
+        slider.targetGraphic = handleImg;
+        slider.fillRect = fillRT;
+        slider.handleRect = handleRT;
+        slider.direction = Slider.Direction.LeftToRight;
+        slider.minValue = 0f;
+        slider.maxValue = 1f;
+        slider.value = 1f;
+
+        return slider;
     }
 
     // Sawarabi Gothic (Assets/Fonts/Source, SIL Open Font License) からTMPフォントアセットを生成する。
