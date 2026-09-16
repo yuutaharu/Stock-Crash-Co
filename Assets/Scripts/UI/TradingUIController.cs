@@ -11,9 +11,6 @@ public class TradingUIController : MonoBehaviour
     public Transform rowContainer;
     public CompanyTradeRow rowPrefab;
 
-    [Header("設定")]
-    public int tradeAmount = 1;
-
     private readonly List<CompanyTradeRow> spawnedRows = new List<CompanyTradeRow>();
 
     // FirstPersonLook側がカーソルのロック可否を判断するために参照する。
@@ -46,7 +43,7 @@ public class TradingUIController : MonoBehaviour
         for (int i = 0; i < companies.Count; i++)
         {
             CompanyTradeRow row = Instantiate(rowPrefab, rowContainer);
-            row.Setup(companies[i], tradeAmount);
+            row.Setup(companies[i]);
             spawnedRows.Add(row);
         }
     }
