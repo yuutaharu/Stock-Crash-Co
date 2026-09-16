@@ -85,10 +85,13 @@ public static class SceneBuilder
         CreateLight();
         CreateFloor();
         CreateBoundaryWalls();
+        CreateCityBackdrop();
         MarketManager marketManager = CreateMarketManager();
 
-        Company burger = CreateCompany("Burger Kingdom", 0, new Vector3(-6f, 1.5f, 5f), new Color(0.85f, 0.35f, 0.2f));
-        Company pizza = CreateCompany("Pizza Palace", 1, new Vector3(6f, 1.5f, 5f), new Color(0.95f, 0.75f, 0.2f));
+        Vector3 burgerPos = new Vector3(-6f, 0f, 5f);
+        Vector3 pizzaPos = new Vector3(6f, 0f, 5f);
+        Company burger = CreateCompany("Burger Kingdom", 0, burgerPos, "Building_Fast Food", pizzaPos);
+        Company pizza = CreateCompany("Pizza Palace", 1, pizzaPos, "Building_Pizza", burgerPos);
         burger.rival = pizza;
         pizza.rival = burger;
 
@@ -105,7 +108,8 @@ public static class SceneBuilder
         TradingUIController tradingUI = CreateTradingUI(canvasTransform);
         CreateBriefingAndResultUI(canvasTransform, burger, pizza);
         CreateTradingPC(new Vector3(0f, 1f, -6f), tradingUI, burger, pizza);
-        GameObject player = CreatePlayer(new Vector3(0f, 1f, 0f));
+        GameObject player = CreatePlayer(new Vector3(0f, 1f, -5f));
+        player.transform.rotation = Quaternion.Euler(0f, 180f, 0f); // 取引PC(z=-6)の方を向いた状態でスタート
         CreateFirstPersonCamera(player.transform);
 
         Directory.CreateDirectory(Path.GetDirectoryName(ScenePath));
@@ -161,6 +165,49 @@ public static class SceneBuilder
         ApplyColor(wall, color);
     }
 
+    // 単なる壁だけだと味気ないので、SimplePoly City パックの建物をランダムに並べて街並みの背景にする。
+    // 東西の壁沿いはロケット砲/店舗があるため衝突を避け、何も置かれていない北(z=+10)と南(z=-10)側だけに置く。
+    // (壁自体のコライダーは既にCreateBoundaryWallsで用意済みなので、こちらは見た目だけ・衝突防止の保険を兼ねる)
+    private static readonly string[] BackdropBuildingNames =
+    {
+        "Building_Bakery", "Building_Bar", "Building_Books Shop", "Building_Chicken Shop",
+        "Building_Clothing", "Building_Coffee Shop", "Building_Drug Store", "Building_Gift Shop",
+        "Building_Music Store", "Building_Shoes Shop", "Building_Super Market",
+        "Building_Residential_color01", "Building_Residential_color02", "Building_Residential_color03",
+        "Building Sky_small_color01", "Building Sky_small_color02", "Building Sky_small_color03",
+    };
+    private const float BackdropTargetFootprint = 4.5f;
+
+    private static void CreateCityBackdrop()
+    {
+        const float half = 10f; // Floorの一辺20の半分
+        const float rowZ = 9.3f; // 店舗/PCの領域と被らないよう壁のすぐ内側
+        const float spacing = 5f;
+
+        int countPerSide = Mathf.Max(1, Mathf.FloorToInt((half * 2f) / spacing));
+        int index = 0;
+        for (int i = 0; i < countPerSide; i++)
+        {
+            float x = -half + spacing * 0.5f + spacing * i;
+            PlaceBackdropBuilding(new Vector3(x, 0f, rowZ), 180f, ref index);   // 北側の壁沿い(内側=南向き)
+            PlaceBackdropBuilding(new Vector3(x, 0f, -rowZ), 0f, ref index);    // 南側の壁沿い(内側=北向き)
+        }
+    }
+
+    private static void PlaceBackdropBuilding(Vector3 position, float yRotation, ref int index)
+    {
+        string prefabName = BackdropBuildingNames[index % BackdropBuildingNames.Length];
+        index++;
+
+        GameObject building = InstantiateBuilding(prefabName, $"Backdrop_{prefabName}_{index}", position, BackdropTargetFootprint);
+        building.transform.rotation = Quaternion.Euler(0f, yRotation, 0f);
+
+        Bounds b = GetLocalBounds(building);
+        BoxCollider collider = building.AddComponent<BoxCollider>();
+        collider.center = b.center;
+        collider.size = b.size;
+    }
+
     private static MarketManager CreateMarketManager()
     {
         GameObject go = new GameObject("MarketManager");
@@ -177,29 +224,109 @@ public static class SceneBuilder
         return session;
     }
 
-    private static Company CreateCompany(string companyName, int id, Vector3 position, Color color)
+    private const string BuildingsFolder = "Assets/SimplePoly City - Low Poly Assets/Prefab/Buildings";
+    // 店舗として使う建物モデルの、横幅(x/zの大きい方)の目標サイズ。実物大(10〜15ユニット)だと
+    // このゲームの20x20マップに対して大きすぎるため、これを基準に自動スケールダウンする。
+    private const float ShopTargetFootprint = 4.5f;
+
+    // モデルの正面が作者依存でどの向きに作られているか分からないため、実際に見て合わなければ
+    // ここを90度単位で調整する(0/90/180/270)。両店舗で共通のモデル群を使っている前提。
+    private const float ShopFrontOffsetDegrees = 0f;
+
+    private static Company CreateCompany(string companyName, int id, Vector3 position, string buildingPrefabFileName, Vector3 facePosition)
     {
-        GameObject shop = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        shop.name = companyName;
-        shop.transform.position = position;
-        shop.transform.localScale = new Vector3(3f, 3f, 3f);
-        ApplyColor(shop, color);
+        GameObject shop = InstantiateBuilding(buildingPrefabFileName, companyName, position, ShopTargetFootprint);
+
+        // 正面が向かい合うよう、もう一方の店がある方向を向かせる。
+        Vector3 faceDir = facePosition - position;
+        faceDir.y = 0f;
+        if (faceDir.sqrMagnitude > 0.0001f)
+        {
+            shop.transform.rotation = Quaternion.LookRotation(faceDir.normalized) * Quaternion.Euler(0f, ShopFrontOffsetDegrees, 0f);
+        }
+
+        Bounds localBounds = GetLocalBounds(shop);
 
         // 見た目通りの大きさで物理的に塞ぐ実体コライダー(プレイヤーがめり込まないようにする)と、
         // それより一回り大きい検知専用のトリガーコライダー(近づいた判定用)を分けて持たせる。
-        BoxCollider solidCollider = shop.GetComponent<BoxCollider>();
+        // モデルごとに大きさが違うため、実寸(メッシュのbounds)から自動的にサイズを決める。
+        BoxCollider solidCollider = shop.AddComponent<BoxCollider>();
+        solidCollider.center = localBounds.center;
+        solidCollider.size = localBounds.size;
         solidCollider.isTrigger = false;
 
         BoxCollider triggerCollider = shop.AddComponent<BoxCollider>();
+        triggerCollider.center = localBounds.center;
+        triggerCollider.size = localBounds.size * 1.6f;
         triggerCollider.isTrigger = true;
-        triggerCollider.size = solidCollider.size * 1.6f;
 
         Company company = shop.AddComponent<Company>();
         company.companyId = id;
         company.companyName = companyName;
         company.basePrice = 100f;
         company.currentPrice = 100f;
+
+        AddNameLabel(shop.transform, companyName, localBounds);
         return company;
+    }
+
+    // SimplePoly City パック内の建物プレハブをインスタンス化する。見つからなければ箱で代用する。
+    // targetFootprint: 横幅(x/zの大きい方)がこのサイズになるよう自動スケールする。
+    private static GameObject InstantiateBuilding(string prefabFileName, string objectName, Vector3 position, float targetFootprint)
+    {
+        string path = $"{BuildingsFolder}/{prefabFileName}.prefab";
+        GameObject prefabAsset = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+
+        GameObject instance;
+        if (prefabAsset != null)
+        {
+            instance = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset);
+        }
+        else
+        {
+            Debug.LogWarning($"SceneBuilder: 建物プレハブが見つかりません ({path})。代わりに箱を使います。");
+            instance = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        }
+        instance.name = objectName;
+
+        Bounds localBounds = GetLocalBounds(instance);
+        float footprint = Mathf.Max(localBounds.size.x, localBounds.size.z);
+        float scale = footprint > 0.0001f ? targetFootprint / footprint : 1f;
+        instance.transform.localScale = Vector3.one * scale;
+
+        // モデルのピボット位置(中心/接地面など)に関わらず、必ず底面がpositionのY座標に接地するようにする。
+        // localBoundsは無スケール(メッシュ本来)の値なので、実際のワールド上のズレはscale倍する必要がある。
+        float bottomWorldOffset = localBounds.min.y * scale;
+        instance.transform.position = new Vector3(position.x, position.y - bottomWorldOffset, position.z);
+
+        return instance;
+    }
+
+    // オブジェクト(の子を含む)が持つメッシュ全体のローカル空間でのbounds。
+    private static Bounds GetLocalBounds(GameObject go)
+    {
+        MeshFilter mf = go.GetComponentInChildren<MeshFilter>();
+        if (mf != null && mf.sharedMesh != null)
+        {
+            return mf.sharedMesh.bounds;
+        }
+        return new Bounds(Vector3.zero, Vector3.one); // プリミティブCube等のフォールバック
+    }
+
+    // 店名を建物の真上に浮かべて表示する(モデルの向きに依存しないよう正面ではなく真上に置く)。
+    private static void AddNameLabel(Transform shop, string companyName, Bounds localBounds)
+    {
+        GameObject nameLabel = new GameObject("NameLabel");
+        nameLabel.transform.SetParent(shop, false);
+        nameLabel.transform.localPosition = new Vector3(localBounds.center.x, localBounds.max.y + 0.6f, localBounds.center.z);
+        TextMeshPro nameTMP = nameLabel.AddComponent<TextMeshPro>();
+        nameTMP.text = companyName;
+        nameTMP.fontSize = 3.2f;
+        nameTMP.alignment = TextAlignmentOptions.Center;
+        nameTMP.color = Color.black;
+        if (s_JapaneseFont != null) nameTMP.font = s_JapaneseFont;
+        RectTransform nameRT = nameLabel.GetComponent<RectTransform>();
+        if (nameRT != null) nameRT.sizeDelta = new Vector2(3f, 0.8f);
     }
 
     // 数値ポップアップ(FloatingText)を生成するだけの共有スポナー。全店舗から参照される。
@@ -234,6 +361,9 @@ public static class SceneBuilder
     private static void AddVisualFeedback(Company company, FloatingTextSpawner spawner)
     {
         GameObject shop = company.gameObject;
+        Bounds b = GetLocalBounds(shop);
+        float sideRadius = Mathf.Max(b.extents.x, b.extents.z);
+        Vector3 midHeight = new Vector3(b.center.x, b.center.y, b.center.z);
 
         CompanyVisualFeedback feedback = shop.AddComponent<CompanyVisualFeedback>();
         feedback.company = company;
@@ -241,17 +371,20 @@ public static class SceneBuilder
         feedback.popupOrigin = shop.transform;
 
         // 汚れは店の足元にゴミが積み上がっていくイメージ、人気は屋根の上に星が増えていくイメージ。
-        feedback.dirtStageProps = CreateStageProps(shop.transform, "Dirt", 4, new Color(0.35f, 0.25f, 0.12f), baseY: 0.3f, radius: 1.8f, itemSize: 0.4f);
+        // モデルごとに大きさが違うため、実寸(bounds)を基準に配置する。
+        feedback.dirtStageProps = CreateStageProps(shop.transform, "Dirt", 4, new Color(0.35f, 0.25f, 0.12f),
+            baseY: b.min.y + 0.2f, radius: sideRadius * 0.9f, itemSize: 0.4f);
         feedback.dirtStageThresholds = new float[] { 10f, 30f, 60f, 100f };
 
-        feedback.popularityStageProps = CreateStageProps(shop.transform, "Popularity", 4, new Color(1f, 0.85f, 0.2f), baseY: 3.3f, radius: 1.0f, itemSize: 0.35f);
+        feedback.popularityStageProps = CreateStageProps(shop.transform, "Popularity", 4, new Color(1f, 0.85f, 0.2f),
+            baseY: b.max.y + 0.3f, radius: sideRadius * 0.5f, itemSize: 0.35f);
         feedback.popularityStageThresholds = new float[] { 10f, 30f, 60f, 100f };
 
-        feedback.dirtBurstEffect = CreateBurstParticles(shop.transform, "DirtBurst", new Color(0.4f, 0.25f, 0.1f));
-        feedback.cleanBurstEffect = CreateBurstParticles(shop.transform, "CleanBurst", new Color(0.4f, 0.9f, 1f));
-        feedback.popularityBurstEffect = CreateBurstParticles(shop.transform, "PopularityBurst", new Color(1f, 0.9f, 0.2f));
+        feedback.dirtBurstEffect = CreateBurstParticles(shop.transform, "DirtBurst", new Color(0.4f, 0.25f, 0.1f), midHeight);
+        feedback.cleanBurstEffect = CreateBurstParticles(shop.transform, "CleanBurst", new Color(0.4f, 0.9f, 1f), midHeight);
+        feedback.popularityBurstEffect = CreateBurstParticles(shop.transform, "PopularityBurst", new Color(1f, 0.9f, 0.2f), midHeight);
 
-        feedback.bankruptEffect = CreateBankruptOverlay(shop.transform);
+        feedback.bankruptEffect = CreateBankruptOverlay(shop.transform, b);
     }
 
     private static GameObject[] CreateStageProps(Transform parent, string namePrefix, int count, Color color, float baseY, float radius, float itemSize)
@@ -276,11 +409,11 @@ public static class SceneBuilder
         return props;
     }
 
-    private static ParticleSystem CreateBurstParticles(Transform parent, string name, Color color)
+    private static ParticleSystem CreateBurstParticles(Transform parent, string name, Color color, Vector3 localPosition)
     {
         GameObject go = new GameObject(name);
         go.transform.SetParent(parent, false);
-        go.transform.localPosition = new Vector3(0f, 1.6f, 0f);
+        go.transform.localPosition = localPosition;
 
         ParticleSystem ps = go.AddComponent<ParticleSystem>();
         ParticleSystem.MainModule main = ps.main;
@@ -303,13 +436,13 @@ public static class SceneBuilder
         return ps;
     }
 
-    private static GameObject CreateBankruptOverlay(Transform parent)
+    private static GameObject CreateBankruptOverlay(Transform parent, Bounds localBounds)
     {
         GameObject go = GameObject.CreatePrimitive(PrimitiveType.Cube);
         go.name = "BankruptOverlay";
         go.transform.SetParent(parent, false);
-        go.transform.localPosition = Vector3.zero;
-        go.transform.localScale = Vector3.one * 1.05f; // 本体より一回り大きく覆う
+        go.transform.localPosition = localBounds.center;
+        go.transform.localScale = localBounds.size * 1.05f; // 本体より一回り大きく覆う
         Object.DestroyImmediate(go.GetComponent<BoxCollider>());
         ApplyColor(go, new Color(0.05f, 0.05f, 0.05f));
         go.SetActive(false);
@@ -338,7 +471,44 @@ public static class SceneBuilder
         RocketLauncher launcher = go.AddComponent<RocketLauncher>();
         launcher.targetCompany = targetCompany;
         launcher.holdSecondsToFire = 2f;
-        launcher.fireEffect = CreateBurstParticles(go.transform, "FireBurst", new Color(1f, 0.5f, 0.1f));
+        launcher.fireEffect = CreateBurstParticles(go.transform, "FireBurst", new Color(1f, 0.5f, 0.1f), new Vector3(0f, 0.6f, 0f));
+
+        DecorateRocketLauncher(go.transform);
+    }
+
+    // 円柱1本だけだと発射台に見えないので、発射台・弾頭・フィンを追加してロケット砲らしく見せる。
+    // RocketLauncher側でGetComponentsInChildrenを使って一括で表示/非表示を切り替えるため、
+    // ここで付けたコライダーは全て外しておく(実体/検知コライダーの邪魔をしないため)。
+    private static void DecorateRocketLauncher(Transform launcher)
+    {
+        GameObject pad = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+        pad.name = "LaunchPad";
+        pad.transform.SetParent(launcher, false);
+        pad.transform.localPosition = new Vector3(0f, -0.55f, 0f);
+        pad.transform.localScale = new Vector3(2.4f, 0.15f, 2.4f);
+        Object.DestroyImmediate(pad.GetComponent<CapsuleCollider>());
+        ApplyColor(pad, new Color(0.15f, 0.15f, 0.16f));
+
+        GameObject nose = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        nose.name = "NoseCone";
+        nose.transform.SetParent(launcher, false);
+        nose.transform.localPosition = new Vector3(0f, 0.62f, 0f);
+        nose.transform.localScale = new Vector3(1.05f, 0.55f, 1.05f);
+        Object.DestroyImmediate(nose.GetComponent<SphereCollider>());
+        ApplyColor(nose, new Color(0.8f, 0.15f, 0.1f));
+
+        for (int i = 0; i < 3; i++)
+        {
+            GameObject fin = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            fin.name = $"Fin_{i}";
+            fin.transform.SetParent(launcher, false);
+            Quaternion rot = Quaternion.Euler(0f, i * 120f, 0f);
+            fin.transform.localRotation = rot;
+            fin.transform.localPosition = rot * new Vector3(0.65f, -0.35f, 0f);
+            fin.transform.localScale = new Vector3(0.55f, 0.5f, 0.06f);
+            Object.DestroyImmediate(fin.GetComponent<BoxCollider>());
+            ApplyColor(fin, new Color(0.3f, 0.3f, 0.32f));
+        }
     }
 
     private static void CreateTradingPC(Vector3 position, TradingUIController tradingUI, params Company[] companies)

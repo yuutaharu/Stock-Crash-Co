@@ -18,13 +18,15 @@ public class RocketLauncher : MonoBehaviour
     private float holdTimer = 0f;
     private bool hasAppeared = false;
 
-    private MeshRenderer meshRenderer;
+    // 発射台・弾頭・フィンなど装飾パーツは全て子オブジェクトなので、
+    // 見た目/コライダーの切り替えは自分自身だけでなく子も含めて一括で行う。
+    private MeshRenderer[] meshRenderers;
     private Collider[] colliders;
 
     void Awake()
     {
-        meshRenderer = GetComponent<MeshRenderer>();
-        colliders = GetComponents<Collider>();
+        meshRenderers = GetComponentsInChildren<MeshRenderer>(true);
+        colliders = GetComponentsInChildren<Collider>(true);
         SetAppearance(false);
     }
 
@@ -72,7 +74,10 @@ public class RocketLauncher : MonoBehaviour
     private void SetAppearance(bool visible)
     {
         hasAppeared = visible;
-        if (meshRenderer != null) meshRenderer.enabled = visible;
+        if (meshRenderers != null)
+        {
+            foreach (MeshRenderer mr in meshRenderers) mr.enabled = visible;
+        }
         if (colliders != null)
         {
             foreach (Collider c in colliders) c.enabled = visible;
