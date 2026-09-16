@@ -20,6 +20,9 @@ public class BriefingUIController : MonoBehaviour
     public Button[] companyButtons;
     public TMP_Text selectedCompanyText;
 
+    [Header("効果音")]
+    public AudioClip clickSound;
+
     private bool hooked = false;
 
     void OnEnable()
@@ -30,7 +33,11 @@ public class BriefingUIController : MonoBehaviour
         if (startButton != null)
         {
             startButton.onClick.RemoveAllListeners();
-            startButton.onClick.AddListener(() => GameSessionManager.Instance.StartMatch());
+            startButton.onClick.AddListener(() =>
+            {
+                Sfx.Play(clickSound);
+                GameSessionManager.Instance.StartMatch();
+            });
         }
     }
 
@@ -80,7 +87,11 @@ public class BriefingUIController : MonoBehaviour
 
             Company company = companies[i];
             companyButtons[i].onClick.RemoveAllListeners();
-            companyButtons[i].onClick.AddListener(() => GameSessionManager.Instance.SelectCompany(company));
+            companyButtons[i].onClick.AddListener(() =>
+            {
+                Sfx.Play(clickSound);
+                GameSessionManager.Instance.SelectCompany(company);
+            });
         }
     }
 

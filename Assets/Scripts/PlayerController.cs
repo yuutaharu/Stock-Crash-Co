@@ -3,8 +3,20 @@ using UnityEngine;
 public class PlayerController : MonoBehaviour
 {
     public float moveSpeed = 6.0f;
+    public float sprintSpeed = 10.0f;
+    public KeyCode sprintKey = KeyCode.LeftShift;
     private Rigidbody rb;
     public Company targetCompany;
+
+    [Header("ゴミ投げ(暴落工作)")]
+    public GameObject trashPrefab;
+    public Transform throwOrigin; // 通常はFPSカメラのtransform
+    public float throwForce = 12f;
+    public float throwCooldownSeconds = 0.4f;
+    private float nextThrowTime = 0f;
+
+    [Header("掃除(高騰工作)")]
+    public float cleanAmount = 10f;
 
     [Header("ネットワーク")]
     public int playerSlot = 0;
@@ -50,16 +62,56 @@ public class PlayerController : MonoBehaviour
 
         if (moveDirection.magnitude > 0.1f)
         {
-            transform.Translate(moveDirection * moveSpeed * Time.deltaTime, Space.World);
+            float speed = Input.GetKey(sprintKey) ? sprintSpeed : moveSpeed;
+            transform.Translate(moveDirection * speed * Time.deltaTime, Space.World);
         }
     }
 
     void HandleActions()
     {
-        if (targetCompany == null) return;
+        if (Input.GetKeyDown(KeyCode.E)) { ThrowTrash(); }
 
-        if (Input.GetKeyDown(KeyCode.E)) { targetCompany.RequestAddDirt(10f); }
-        if (Input.GetKeyDown(KeyCode.F)) { targetCompany.RequestCleanDirt(10f); }
+        if (targetCompany != null && Input.GetKeyDown(KeyCode.F))
+        {
+            targetCompany.RequestCleanDirt(cleanAmount);
+            RemoveNearestTrashMark(targetCompany);
+        }
+    }
+
+    // ゴミを前方へ投げる。狙いを付けて実際に店舗に当てないと汚れない
+    // (以前のような、近づいてキーを押すだけの即時汚し工作は廃止)。
+    private void ThrowTrash()
+    {
+        if (trashPrefab == null || throwOrigin == null) return;
+        if (Time.time < nextThrowTime) return;
+        nextThrowTime = Time.time + throwCooldownSeconds;
+
+        GameObject trash = Instantiate(trashPrefab, throwOrigin.position + throwOrigin.forward * 0.6f, Random.rotation);
+        Rigidbody trashRb = trash.GetComponent<Rigidbody>();
+        if (trashRb != null)
+        {
+            trashRb.AddForce(throwOrigin.forward * throwForce, ForceMode.VelocityChange);
+        }
+    }
+
+    // 掃除は近くにある張り付いたゴミも1つ取り除く(見た目と数値を一致させる)。
+    private void RemoveNearestTrashMark(Company company)
+    {
+        TrashMarker[] marks = company.GetComponentsInChildren<TrashMarker>();
+        if (marks.Length == 0) return;
+
+        TrashMarker nearest = null;
+        float bestDistance = float.MaxValue;
+        foreach (TrashMarker mark in marks)
+        {
+            float distance = Vector3.Distance(mark.transform.position, transform.position);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                nearest = mark;
+            }
+        }
+        if (nearest != null) Destroy(nearest.gameObject);
     }
 
     void BroadcastTransformIfDue()

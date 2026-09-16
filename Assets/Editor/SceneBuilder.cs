@@ -94,6 +94,44 @@ public static class SceneBuilder
         AssetDatabase.ImportPackage(packagePath, false);
     }
 
+    // "Casual Game Sounds U6" (Dustyroom) は各ファイルが番号だけで内容が分からなかったため、
+    // ffmpegでスペクトログラムを目視して用途に合いそうなものを選んでいる。
+    private const string SfxFolder = "Assets/Casual Game Sounds U6/CasualGameSounds";
+    private const string BgmPath = "Assets/ArcadeGameBGM#17/ArcadeGameBGM#17.wav";
+
+    private class SfxSet
+    {
+        public AudioClip Dirt;
+        public AudioClip Clean;
+        public AudioClip Popularity;
+        public AudioClip Bankrupt;
+        public AudioClip RocketCharge;
+        public AudioClip RocketFire;
+        public AudioClip Win;
+        public AudioClip Lose;
+        public AudioClip Click;
+        public AudioClip Bgm;
+    }
+
+    private static SfxSet LoadSfx()
+    {
+        AudioClip Load(string fileName) => AssetDatabase.LoadAssetAtPath<AudioClip>($"{SfxFolder}/{fileName}.wav");
+
+        return new SfxSet
+        {
+            Dirt = Load("DM-CGS-37"),
+            Clean = Load("DM-CGS-07"),
+            Popularity = Load("DM-CGS-14"),
+            Bankrupt = Load("DM-CGS-39"),
+            RocketCharge = Load("DM-CGS-43"),
+            RocketFire = Load("DM-CGS-39"),
+            Win = Load("DM-CGS-33"),
+            Lose = Load("DM-CGS-22"),
+            Click = Load("DM-CGS-20"),
+            Bgm = AssetDatabase.LoadAssetAtPath<AudioClip>(BgmPath),
+        };
+    }
+
     [MenuItem("Tools/Stock Crash Co/2. Build MVP Stage")]
     public static void BuildStage()
     {
@@ -105,9 +143,12 @@ public static class SceneBuilder
             s_JapaneseFont = CreateJapaneseFontAsset();
         }
 
+        SfxSet sfx = LoadSfx();
+
         CreateLight();
         CreateFloor();
         CreateBoundaryWalls();
+        CreateMusicPlayer(sfx.Bgm);
 
         // マップの奥(北側, +Z)で向かい合わせ。手前(南側, -Z)には取引PCとスタート地点を置く。
         Vector3 burgerPos = new Vector3(-8f, 0f, 13f);
@@ -131,22 +172,27 @@ public static class SceneBuilder
         pizza.rival = burger;
 
         FloatingTextSpawner floatingTextSpawner = CreateFloatingTextSpawner();
-        AddVisualFeedback(burger, floatingTextSpawner);
-        AddVisualFeedback(pizza, floatingTextSpawner);
+        AddVisualFeedback(burger, floatingTextSpawner, sfx);
+        AddVisualFeedback(pizza, floatingTextSpawner, sfx);
 
-        CreateRocketLauncher(burgerLauncherPos, burger);
-        CreateRocketLauncher(pizzaLauncherPos, pizza);
+        CreateRocketLauncher(burgerLauncherPos, burger, sfx);
+        CreateRocketLauncher(pizzaLauncherPos, pizza, sfx);
 
         CreateGameSessionManager(burger, pizza);
 
         Transform canvasTransform = CreateUIRoot();
-        TradingUIController tradingUI = CreateTradingUI(canvasTransform);
-        CreateBriefingAndResultUI(canvasTransform, burger, pizza);
+        TradingUIController tradingUI = CreateTradingUI(canvasTransform, sfx);
+        CreateBriefingAndResultUI(canvasTransform, sfx, burger, pizza);
         CreateTradingPC(tradingPCPos, tradingUI, burger, pizza);
         GameObject player = CreatePlayer(new Vector3(0f, 1f, tradingPCPos.z + 1.5f));
         player.transform.rotation = Quaternion.Euler(0f, 180f, 0f); // 取引PC(手前)の方を向いた状態でスタート
         AddPlayerCharacterModel(player);
-        CreateFirstPersonCamera(player.transform);
+        GameObject fpsCamera = CreateFirstPersonCamera(player.transform);
+
+        GameObject trashPrefab = CreateTrashPrefab(sfx);
+        PlayerController playerController = player.GetComponent<PlayerController>();
+        playerController.trashPrefab = trashPrefab;
+        playerController.throwOrigin = fpsCamera.transform;
 
         CreateNPCs(6);
 
@@ -169,6 +215,14 @@ public static class SceneBuilder
         light.type = LightType.Directional;
         light.intensity = 1.1f;
         lightGO.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
+    }
+
+    private static void CreateMusicPlayer(AudioClip bgm)
+    {
+        GameObject go = new GameObject("MusicPlayer");
+        MusicPlayer player = go.AddComponent<MusicPlayer>();
+        player.musicClip = bgm;
+        player.volume = 0.4f;
     }
 
     private static void CreateFloor()
@@ -448,7 +502,7 @@ public static class SceneBuilder
     }
 
     // dirtiness/popularity/破産を見た目に変換するCompanyVisualFeedbackを組み立てて店舗に付与する。
-    private static void AddVisualFeedback(Company company, FloatingTextSpawner spawner)
+    private static void AddVisualFeedback(Company company, FloatingTextSpawner spawner, SfxSet sfx)
     {
         GameObject shop = company.gameObject;
         Bounds b = GetLocalBounds(shop);
@@ -459,6 +513,10 @@ public static class SceneBuilder
         feedback.company = company;
         feedback.floatingTextSpawner = spawner;
         feedback.popupOrigin = shop.transform;
+        feedback.dirtSound = sfx.Dirt;
+        feedback.cleanSound = sfx.Clean;
+        feedback.popularitySound = sfx.Popularity;
+        feedback.bankruptSound = sfx.Bankrupt;
 
         // 汚れは店の足元にゴミが積み上がっていくイメージ、人気は屋根の上に星が増えていくイメージ。
         // モデルごとに大きさが違うため、実寸(bounds)を基準に配置する。
@@ -541,7 +599,7 @@ public static class SceneBuilder
 
     // 終盤兵器。目標金額を達成すると相手企業側だけ出現し、Eキー長押しで即破産させられる
     // (出現条件・長押し判定はRocketLauncher.cs側。ここでは見た目とコライダーを組み立てるだけ)。
-    private static void CreateRocketLauncher(Vector3 position, Company targetCompany)
+    private static void CreateRocketLauncher(Vector3 position, Company targetCompany, SfxSet sfx)
     {
         GameObject go = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
         go.name = $"RocketLauncher_{targetCompany.companyName}";
@@ -562,6 +620,8 @@ public static class SceneBuilder
         launcher.targetCompany = targetCompany;
         launcher.holdSecondsToFire = 2f;
         launcher.fireEffect = CreateBurstParticles(go.transform, "FireBurst", new Color(1f, 0.5f, 0.1f), new Vector3(0f, 0.6f, 0f));
+        launcher.chargeLoopSound = sfx.RocketCharge;
+        launcher.fireSound = sfx.RocketFire;
 
         DecorateRocketLauncher(go.transform);
     }
@@ -607,7 +667,7 @@ public static class SceneBuilder
         desk.name = "TradingPC";
         desk.transform.position = position;
         desk.transform.localScale = new Vector3(1.2f, 1f, 0.8f);
-        ApplyColor(desk, new Color(0.15f, 0.2f, 0.3f));
+        desk.GetComponent<MeshRenderer>().enabled = false; // 見た目は子パーツ(デスク/モニター/椅子等)で構成する
 
         // 見た目通りの大きさの実体コライダー(めり込み防止)と、操作可能距離を広げる検知用トリガーを分ける。
         BoxCollider solidCollider = desk.GetComponent<BoxCollider>();
@@ -617,9 +677,48 @@ public static class SceneBuilder
         triggerCollider.isTrigger = true;
         triggerCollider.size = new Vector3(4f, 4f, 4f); // 見た目より広い範囲で反応させる
 
+        DecorateTradingPC(desk.transform);
+
         TradingPC tradingPC = desk.AddComponent<TradingPC>();
         tradingPC.tradableCompanies = companies;
         tradingPC.tradingUI = tradingUI;
+    }
+
+    // 適切な既製アセットが手持ちのパック内に無かったため、デスク・モニター・キーボード・椅子を
+    // プリミティブの組み合わせで作る。ルート(TradingPC)はワールドY=positionYが中心で、
+    // 床(ワールドY=0)を基準にした高さになるようlocalPositionを逆算している。
+    private static void DecorateTradingPC(Transform root)
+    {
+        float rootWorldY = root.position.y;
+        float LocalY(float worldY) => worldY - rootWorldY; // root.localScale.y==1前提
+
+        CreatePcPart(root, "DeskLeg_FL", new Vector3(0.42f, LocalY(0.36f), 0.42f), new Vector3(0.06f, 0.72f, 0.06f), new Color(0.08f, 0.08f, 0.08f));
+        CreatePcPart(root, "DeskLeg_FR", new Vector3(-0.42f, LocalY(0.36f), 0.42f), new Vector3(0.06f, 0.72f, 0.06f), new Color(0.08f, 0.08f, 0.08f));
+        CreatePcPart(root, "DeskLeg_BL", new Vector3(0.42f, LocalY(0.36f), -0.42f), new Vector3(0.06f, 0.72f, 0.06f), new Color(0.08f, 0.08f, 0.08f));
+        CreatePcPart(root, "DeskLeg_BR", new Vector3(-0.42f, LocalY(0.36f), -0.42f), new Vector3(0.06f, 0.72f, 0.06f), new Color(0.08f, 0.08f, 0.08f));
+
+        CreatePcPart(root, "DeskTop", new Vector3(0f, LocalY(0.75f), 0f), new Vector3(1f, 0.06f, 1f), new Color(0.35f, 0.22f, 0.12f));
+
+        CreatePcPart(root, "Monitor", new Vector3(0f, LocalY(1.02f), -0.25f), new Vector3(0.55f, 0.35f, 0.04f), new Color(0.05f, 0.05f, 0.05f));
+        CreatePcPart(root, "MonitorScreen", new Vector3(0f, LocalY(1.02f), -0.22f), new Vector3(0.48f, 0.28f, 0.01f), new Color(0.2f, 0.9f, 0.5f));
+        CreatePcPart(root, "MonitorStand", new Vector3(0f, LocalY(0.815f), -0.25f), new Vector3(0.06f, 0.07f, 0.06f), new Color(0.08f, 0.08f, 0.08f));
+
+        CreatePcPart(root, "Keyboard", new Vector3(0f, LocalY(0.79f), 0.15f), new Vector3(0.4f, 0.02f, 0.15f), new Color(0.15f, 0.15f, 0.15f));
+
+        CreatePcPart(root, "ChairSeat", new Vector3(0f, LocalY(0.45f), 0.85f), new Vector3(0.4f, 0.06f, 0.4f), new Color(0.2f, 0.2f, 0.25f));
+        CreatePcPart(root, "ChairBack", new Vector3(0f, LocalY(0.75f), 1.05f), new Vector3(0.4f, 0.5f, 0.06f), new Color(0.2f, 0.2f, 0.25f));
+        CreatePcPart(root, "ChairLeg", new Vector3(0f, LocalY(0.21f), 0.85f), new Vector3(0.06f, 0.42f, 0.06f), new Color(0.08f, 0.08f, 0.08f));
+    }
+
+    private static void CreatePcPart(Transform parent, string name, Vector3 localPosition, Vector3 localScale, Color color)
+    {
+        GameObject part = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        part.name = name;
+        part.transform.SetParent(parent, false);
+        part.transform.localPosition = localPosition;
+        part.transform.localScale = localScale;
+        Object.DestroyImmediate(part.GetComponent<BoxCollider>());
+        ApplyColor(part, color);
     }
 
     private static GameObject CreatePlayer(Vector3 position)
@@ -640,7 +739,7 @@ public static class SceneBuilder
         return player;
     }
 
-    private static void CreateFirstPersonCamera(Transform playerTransform)
+    private static GameObject CreateFirstPersonCamera(Transform playerTransform)
     {
         GameObject camGO = new GameObject("FPSCamera");
         camGO.tag = "MainCamera";
@@ -650,6 +749,78 @@ public static class SceneBuilder
         camGO.AddComponent<Camera>();
         camGO.AddComponent<AudioListener>();
         camGO.AddComponent<FirstPersonLook>();
+
+        CreateMopViewModel(camGO.transform);
+        return camGO;
+    }
+
+    // モップは常時持っている道具として、一人称カメラの右下に固定表示する(掃除の演出は数値/ゴミ除去側で行う)。
+    private static void CreateMopViewModel(Transform camera)
+    {
+        GameObject mop = new GameObject("MopViewModel");
+        mop.transform.SetParent(camera, false);
+        mop.transform.localPosition = new Vector3(0.35f, -0.35f, 0.6f);
+        mop.transform.localRotation = Quaternion.Euler(15f, 0f, -10f);
+
+        GameObject handle = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+        handle.name = "Handle";
+        handle.transform.SetParent(mop.transform, false);
+        handle.transform.localPosition = new Vector3(0f, 0.4f, 0f);
+        handle.transform.localScale = new Vector3(0.03f, 0.5f, 0.03f);
+        Object.DestroyImmediate(handle.GetComponent<CapsuleCollider>());
+        ApplyColor(handle, new Color(0.4f, 0.28f, 0.15f));
+
+        GameObject head = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        head.name = "Head";
+        head.transform.SetParent(mop.transform, false);
+        head.transform.localPosition = new Vector3(0f, -0.12f, 0f);
+        head.transform.localScale = new Vector3(0.14f, 0.12f, 0.08f);
+        Object.DestroyImmediate(head.GetComponent<BoxCollider>());
+        ApplyColor(head, new Color(0.85f, 0.82f, 0.7f));
+    }
+
+    // 投げるゴミ本体。プレハブとして保存し、PlayerControllerがInstantiateする。
+    private const string TrashPrefabPath = "Assets/Prefabs/Trash.prefab";
+
+    private static GameObject CreateTrashPrefab(SfxSet sfx)
+    {
+        GameObject trash = new GameObject("Trash");
+        Rigidbody rb = trash.AddComponent<Rigidbody>();
+        rb.mass = 0.3f;
+
+        SphereCollider col = trash.AddComponent<SphereCollider>();
+        col.radius = 0.15f;
+
+        TrashProjectile projectile = trash.AddComponent<TrashProjectile>();
+        projectile.dirtAmount = 5f;
+        projectile.splatSound = sfx.Dirt;
+
+        GameObject core = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        core.name = "Visual";
+        core.transform.SetParent(trash.transform, false);
+        core.transform.localScale = Vector3.one * 0.3f;
+        Object.DestroyImmediate(core.GetComponent<SphereCollider>());
+        ApplyColor(core, new Color(0.35f, 0.28f, 0.15f));
+
+        for (int i = 0; i < 3; i++)
+        {
+            GameObject fleck = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            fleck.name = $"Fleck_{i}";
+            fleck.transform.SetParent(trash.transform, false);
+            fleck.transform.localPosition = Random.insideUnitSphere * 0.12f;
+            fleck.transform.localRotation = Random.rotation;
+            fleck.transform.localScale = Vector3.one * 0.12f;
+            Object.DestroyImmediate(fleck.GetComponent<BoxCollider>());
+            ApplyColor(fleck, new Color(0.3f, 0.4f, 0.15f));
+        }
+
+        if (!AssetDatabase.IsValidFolder("Assets/Prefabs"))
+        {
+            AssetDatabase.CreateFolder("Assets", "Prefabs");
+        }
+        GameObject prefabAsset = PrefabUtility.SaveAsPrefabAsset(trash, TrashPrefabPath);
+        Object.DestroyImmediate(trash);
+        return prefabAsset;
     }
 
     // City People (DenysAlmaral) アセットのキャラクターを、路上を歩き回るだけのNPCとして配置する。
@@ -735,7 +906,7 @@ public static class SceneBuilder
         return canvasGO.transform;
     }
 
-    private static TradingUIController CreateTradingUI(Transform canvasTransform)
+    private static TradingUIController CreateTradingUI(Transform canvasTransform, SfxSet sfx)
     {
         GameObject panelGO = new GameObject("TradingPanel", typeof(RectTransform));
         panelGO.transform.SetParent(canvasTransform, false);
@@ -775,13 +946,13 @@ public static class SceneBuilder
         vlg.childForceExpandHeight = false;
         tradingUI.rowContainer = rowContainerGO.transform;
 
-        tradingUI.rowPrefab = CreateRowPrefab();
+        tradingUI.rowPrefab = CreateRowPrefab(sfx);
 
         panelGO.SetActive(false);
         return tradingUI;
     }
 
-    private static void CreateBriefingAndResultUI(Transform canvasTransform, params Company[] selectableCompanies)
+    private static void CreateBriefingAndResultUI(Transform canvasTransform, SfxSet sfx, params Company[] selectableCompanies)
     {
         GamePhaseUIRouter router = canvasTransform.GetComponent<GamePhaseUIRouter>();
 
@@ -796,6 +967,7 @@ public static class SceneBuilder
         briefingBg.color = new Color(0f, 0f, 0f, 0.85f);
 
         BriefingUIController briefing = briefingGO.AddComponent<BriefingUIController>();
+        briefing.clickSound = sfx.Click;
 
         PositionTop(CreateTMPText("Title", briefingGO.transform, "ブリーフィング", 26f, TextAlignmentOptions.Center), 16f, 36f);
 
@@ -871,6 +1043,8 @@ public static class SceneBuilder
         resultBg.color = new Color(0f, 0f, 0f, 0.85f);
 
         ResultUIController result = resultGO.AddComponent<ResultUIController>();
+        result.winSound = sfx.Win;
+        result.loseSound = sfx.Lose;
 
         GameObject resultTitleGO = CreateTMPText("ResultTitleText", resultGO.transform, "", 28f, TextAlignmentOptions.Center);
         PositionTop(resultTitleGO, 30f, 40f);
@@ -985,7 +1159,7 @@ public static class SceneBuilder
         rt.sizeDelta = new Vector2(-40f, height);
     }
 
-    private static CompanyTradeRow CreateRowPrefab()
+    private static CompanyTradeRow CreateRowPrefab(SfxSet sfx)
     {
         GameObject rowGO = new GameObject("CompanyTradeRow", typeof(RectTransform));
         LayoutElement rowLE = rowGO.AddComponent<LayoutElement>();
@@ -1002,6 +1176,7 @@ public static class SceneBuilder
         rowVLG.childForceExpandHeight = false;
 
         CompanyTradeRow rowScript = rowGO.AddComponent<CompanyTradeRow>();
+        rowScript.clickSound = sfx.Click;
 
         GameObject nameGO = CreateTMPText("NameText", rowGO.transform, "Company", 20f, TextAlignmentOptions.Left);
         rowScript.companyNameText = nameGO.GetComponent<TextMeshProUGUI>();

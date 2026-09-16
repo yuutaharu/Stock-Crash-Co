@@ -48,3 +48,6 @@ crashlytics-build.properties
 
 # macOS
 .DS_Store
+
+# SoundBits SFXライブラリ(746MB、現状未使用)。使う音を選んだら個別にコミットする。
+/Assets/Libraries/

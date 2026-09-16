@@ -8,6 +8,10 @@ public class ResultUIController : MonoBehaviour
     public TMP_Text resultTitleText;
     public TMP_Text finalMoneyText;
 
+    [Header("効果音")]
+    public AudioClip winSound;
+    public AudioClip loseSound;
+
     void OnEnable()
     {
         Refresh();
@@ -17,10 +21,12 @@ public class ResultUIController : MonoBehaviour
     {
         if (GameSessionManager.Instance == null || MarketManager.Instance == null) return;
 
+        bool won = GameSessionManager.Instance.MatchWon;
         if (resultTitleText != null)
         {
-            resultTitleText.text = GameSessionManager.Instance.MatchWon ? "目標達成！" : "未達成…";
+            resultTitleText.text = won ? "目標達成！" : "未達成…";
         }
+        Sfx.Play(won ? winSound : loseSound);
 
         if (finalMoneyText != null)
         {

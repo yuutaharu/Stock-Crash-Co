@@ -14,6 +14,9 @@ public class CompanyTradeRow : MonoBehaviour
     public Button buyButton;
     public Button sellButton;
 
+    [Header("効果音")]
+    public AudioClip clickSound;
+
     private Company company;
     private int tradeAmount = 1;
 
@@ -27,13 +30,21 @@ public class CompanyTradeRow : MonoBehaviour
         if (buyButton != null)
         {
             buyButton.onClick.RemoveAllListeners();
-            buyButton.onClick.AddListener(() => MarketManager.Instance.RequestBuyStock(company, tradeAmount));
+            buyButton.onClick.AddListener(() =>
+            {
+                Sfx.Play(clickSound);
+                MarketManager.Instance.RequestBuyStock(company, tradeAmount);
+            });
         }
 
         if (sellButton != null)
         {
             sellButton.onClick.RemoveAllListeners();
-            sellButton.onClick.AddListener(() => MarketManager.Instance.RequestSellStock(company, tradeAmount));
+            sellButton.onClick.AddListener(() =>
+            {
+                Sfx.Play(clickSound);
+                MarketManager.Instance.RequestSellStock(company, tradeAmount);
+            });
         }
     }
 

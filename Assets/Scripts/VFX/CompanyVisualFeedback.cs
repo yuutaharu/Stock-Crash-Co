@@ -30,6 +30,12 @@ public class CompanyVisualFeedback : MonoBehaviour
     public FloatingTextSpawner floatingTextSpawner;
     public Transform popupOrigin;
 
+    [Header("効果音")]
+    public AudioClip dirtSound;
+    public AudioClip cleanSound;
+    public AudioClip popularitySound;
+    public AudioClip bankruptSound;
+
     private float lastDirtiness;
     private float lastPopularity;
     private bool lastBankrupt;
@@ -84,11 +90,13 @@ public class CompanyVisualFeedback : MonoBehaviour
         {
             PlayBurst(dirtBurstEffect);
             SpawnPopup($"+{delta:F0} 汚れ", Color.red);
+            Sfx.Play(dirtSound);
         }
         else if (delta < 0f)
         {
             PlayBurst(cleanBurstEffect);
             SpawnPopup($"{delta:F0} 汚れ", Color.green);
+            Sfx.Play(cleanSound);
         }
     }
 
@@ -100,6 +108,7 @@ public class CompanyVisualFeedback : MonoBehaviour
         {
             PlayBurst(popularityBurstEffect);
             SpawnPopup($"+{delta:F0} 人気", Color.yellow);
+            Sfx.Play(popularitySound);
         }
     }
 
@@ -107,6 +116,7 @@ public class CompanyVisualFeedback : MonoBehaviour
     {
         if (bankruptEffect != null) bankruptEffect.SetActive(true);
         SpawnPopup("破産！", Color.red);
+        Sfx.Play(bankruptSound);
     }
 
     private void RefreshDirtStages() => RefreshStageProps(dirtStageProps, dirtStageThresholds, company.dirtiness);
