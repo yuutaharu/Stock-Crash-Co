@@ -15,9 +15,7 @@ public class BriefingUIController : MonoBehaviour
     public Button startButton;
     public GameObject waitingForHostLabel;
 
-    [Header("企業選択")]
-    // targetCompanies(GameSessionManager側)と同じ並び順で用意しておく
-    public Button[] companyButtons;
+    [Header("担当企業(選択UIは廃止し、常に固定の1社)")]
     public TMP_Text selectedCompanyText;
 
     [Header("効果音")]
@@ -71,28 +69,7 @@ public class BriefingUIController : MonoBehaviour
         if (GameSessionManager.Instance == null) return;
 
         RefreshContent();
-        WireCompanyButtons();
         hooked = true;
-    }
-
-    private void WireCompanyButtons()
-    {
-        if (companyButtons == null || GameSessionManager.Instance == null) return;
-
-        Company[] companies = GameSessionManager.Instance.targetCompanies;
-        for (int i = 0; i < companyButtons.Length; i++)
-        {
-            if (companyButtons[i] == null) continue;
-            if (companies == null || i >= companies.Length || companies[i] == null) continue;
-
-            Company company = companies[i];
-            companyButtons[i].onClick.RemoveAllListeners();
-            companyButtons[i].onClick.AddListener(() =>
-            {
-                Sfx.Play(clickSound);
-                GameSessionManager.Instance.SelectCompany(company);
-            });
-        }
     }
 
     private void RefreshContent()

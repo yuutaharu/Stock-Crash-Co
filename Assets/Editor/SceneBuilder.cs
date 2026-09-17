@@ -199,7 +199,7 @@ public static class SceneBuilder
 
         Transform canvasTransform = CreateUIRoot();
         TradingUIController tradingUI = CreateTradingUI(canvasTransform, sfx);
-        CreateBriefingAndResultUI(canvasTransform, sfx, out Button openSettingsButton, burger, pizza);
+        CreateBriefingAndResultUI(canvasTransform, sfx, out Button openSettingsButton);
         CreateTradingPC(tradingPCPos, tradingUI, burger, pizza);
         GameObject player = CreatePlayer(new Vector3(0f, 1f, tradingPCPos.z + 1.5f));
         player.transform.rotation = Quaternion.Euler(0f, 180f, 0f); // 取引PC(手前)の方を向いた状態でスタート
@@ -1122,7 +1122,7 @@ public static class SceneBuilder
         return tradingUI;
     }
 
-    private static void CreateBriefingAndResultUI(Transform canvasTransform, SfxSet sfx, out Button openSettingsButton, params Company[] selectableCompanies)
+    private static void CreateBriefingAndResultUI(Transform canvasTransform, SfxSet sfx, out Button openSettingsButton)
     {
         GamePhaseUIRouter router = canvasTransform.GetComponent<GamePhaseUIRouter>();
 
@@ -1132,7 +1132,7 @@ public static class SceneBuilder
         RectTransform briefingRT = briefingGO.GetComponent<RectTransform>();
         briefingRT.anchorMin = new Vector2(0.5f, 0.5f);
         briefingRT.anchorMax = new Vector2(0.5f, 0.5f);
-        briefingRT.sizeDelta = new Vector2(560f, 440f);
+        briefingRT.sizeDelta = new Vector2(560f, 500f);
         Image briefingBg = briefingGO.AddComponent<Image>();
         briefingBg.color = new Color(0f, 0f, 0f, 0.85f);
 
@@ -1141,48 +1141,33 @@ public static class SceneBuilder
 
         PositionTop(CreateTMPText("Title", briefingGO.transform, "ブリーフィング", 26f, TextAlignmentOptions.Center), 16f, 36f);
 
+        // 依頼内容(ストーリー導入)。売れないバーガー店を立て直すために呼ばれた、という体で
+        // プレイヤーが何者で何をしに来たのかを短く説明する。
+        GameObject storyGO = CreateTMPText(
+            "StoryText",
+            briefingGO.transform,
+            "依頼内容\n売れないバーガー店「バーガー・キングダム」を立て直すため、伝説の工作会社『Stock Crash Co.』が招集された。向かいの「ピザ・パレス」を汚し、こちらを掃除して株価を釣り上げろ。目標金額に届いたら、ロケット砲でピザ・パレスにトドメを刺せ。",
+            15f,
+            TextAlignmentOptions.Center);
+        PositionTop(storyGO, 58f, 120f);
+        storyGO.GetComponent<TextMeshProUGUI>().color = new Color(0.85f, 0.85f, 0.85f);
+
         GameObject targetAmountGO = CreateTMPText("TargetAmountText", briefingGO.transform, "", 20f, TextAlignmentOptions.Center);
-        PositionTop(targetAmountGO, 64f, 30f);
+        PositionTop(targetAmountGO, 186f, 30f);
         briefing.targetAmountText = targetAmountGO.GetComponent<TextMeshProUGUI>();
 
         GameObject targetCompaniesGO = CreateTMPText("TargetCompaniesText", briefingGO.transform, "", 18f, TextAlignmentOptions.Center);
-        PositionTop(targetCompaniesGO, 100f, 28f);
+        PositionTop(targetCompaniesGO, 222f, 28f);
         briefing.targetCompaniesText = targetCompaniesGO.GetComponent<TextMeshProUGUI>();
 
         GameObject timeLimitGO = CreateTMPText("TimeLimitText", briefingGO.transform, "", 18f, TextAlignmentOptions.Center);
-        PositionTop(timeLimitGO, 132f, 28f);
+        PositionTop(timeLimitGO, 254f, 28f);
         briefing.timeLimitText = timeLimitGO.GetComponent<TextMeshProUGUI>();
 
-        // --- 担当企業の選択ボタン ---
-        GameObject companyButtonsRow = new GameObject("CompanyButtons", typeof(RectTransform));
-        companyButtonsRow.transform.SetParent(briefingGO.transform, false);
-        RectTransform companyButtonsRT = companyButtonsRow.GetComponent<RectTransform>();
-        companyButtonsRT.anchorMin = new Vector2(0f, 1f);
-        companyButtonsRT.anchorMax = new Vector2(1f, 1f);
-        companyButtonsRT.pivot = new Vector2(0.5f, 1f);
-        companyButtonsRT.anchoredPosition = new Vector2(0f, -172f);
-        companyButtonsRT.sizeDelta = new Vector2(-40f, 72f);
-        HorizontalLayoutGroup companyButtonsHLG = companyButtonsRow.AddComponent<HorizontalLayoutGroup>();
-        companyButtonsHLG.spacing = 12f;
-        companyButtonsHLG.childControlWidth = true;
-        companyButtonsHLG.childForceExpandWidth = true;
-        companyButtonsHLG.childControlHeight = true;
-        companyButtonsHLG.childForceExpandHeight = true;
-
-        // ボタンに社名だけでなく基準株価と性格(安定型/ハイリスク型)も表示し、
-        // どちらを選ぶか意味のある判断材料になるようにする。
-        Button[] companyButtons = new Button[selectableCompanies.Length];
-        for (int i = 0; i < selectableCompanies.Length; i++)
-        {
-            Color color = i == 0 ? new Color(0.7f, 0.35f, 0.2f) : new Color(0.8f, 0.65f, 0.2f);
-            Company c = selectableCompanies[i];
-            string label = $"{c.companyName}\n基準株価 ${c.basePrice:F0}\n{c.flavorLabel}";
-            companyButtons[i] = CreateButton($"CompanyButton_{i}", companyButtonsRow.transform, label, color);
-        }
-        briefing.companyButtons = companyButtons;
-
-        GameObject selectedCompanyGO = CreateTMPText("SelectedCompanyText", briefingGO.transform, "担当企業を選んでください", 18f, TextAlignmentOptions.Center);
-        PositionTop(selectedCompanyGO, 256f, 28f);
+        // 企業選択UIは廃止し、常にバーガー・キングダムに固定する(GameSessionManager側で自動選択)。
+        // ここでは選ばれた企業名だけを確認用に表示する。
+        GameObject selectedCompanyGO = CreateTMPText("SelectedCompanyText", briefingGO.transform, "担当企業: バーガー・キングダム", 18f, TextAlignmentOptions.Center);
+        PositionTop(selectedCompanyGO, 294f, 28f);
         briefing.selectedCompanyText = selectedCompanyGO.GetComponent<TextMeshProUGUI>();
 
         Button startBtn = CreateButton("StartButton", briefingGO.transform, "開始", new Color(0.2f, 0.6f, 0.3f));
@@ -1428,12 +1413,9 @@ public static class SceneBuilder
         titleRT.sizeDelta = new Vector2(700f, 80f);
         titleRT.anchoredPosition = Vector2.zero;
 
-        GameObject subtitleGO = CreateTMPText("SubtitleText", panelGO.transform, "妨害と工作で株価を乱高下させろ", 18f, TextAlignmentOptions.Center);
-        RectTransform subtitleRT = subtitleGO.GetComponent<RectTransform>();
-        subtitleRT.anchorMin = new Vector2(0.5f, 0.6f);
-        subtitleRT.anchorMax = new Vector2(0.5f, 0.6f);
-        subtitleRT.sizeDelta = new Vector2(700f, 30f);
-        subtitleRT.anchoredPosition = new Vector2(0f, -50f);
+        // サブタイトルは付けない。ステージごとにストーリーが変わる想定のため(このステージは
+        // バーガー・キングダム側の依頼だが、次のステージ以降は変わる)、タイトル画面には
+        // 特定ステージの設定を焼き込まない。ステージ固有のストーリーはブリーフィング画面側で説明する。
 
         Button startBtn = CreateButton("StartButton", panelGO.transform, "プレイ開始", new Color(0.2f, 0.6f, 0.3f));
         RectTransform startBtnRT = startBtn.GetComponent<RectTransform>();
@@ -1508,12 +1490,12 @@ public static class SceneBuilder
         amountHLG.childControlHeight = true;
         amountHLG.childForceExpandHeight = true;
         LayoutElement amountRowLE = amountRow.AddComponent<LayoutElement>();
-        amountRowLE.preferredHeight = 24f;
+        amountRowLE.preferredHeight = 16f;
 
-        Slider amountSlider = CreateSlider("AmountSlider", amountRow.transform);
+        Slider amountSlider = CreateSlider("AmountSlider", amountRow.transform, height: 12f);
         LayoutElement sliderLE = amountSlider.gameObject.AddComponent<LayoutElement>();
         sliderLE.flexibleWidth = 1f;
-        sliderLE.preferredHeight = 20f;
+        sliderLE.preferredHeight = 12f;
         rowScript.amountSlider = amountSlider;
 
         GameObject amountTextGO = CreateTMPText("AmountText", amountRow.transform, "0株", 14f, TextAlignmentOptions.Right);
@@ -1587,12 +1569,12 @@ public static class SceneBuilder
     }
 
     // 一般的なUnity UIのSlider階層(Background / Fill Area>Fill / Handle Slide Area>Handle)を組み立てる。
-    private static Slider CreateSlider(string name, Transform parent)
+    private static Slider CreateSlider(string name, Transform parent, float height = 20f)
     {
         GameObject go = new GameObject(name, typeof(RectTransform));
         go.transform.SetParent(parent, false);
         RectTransform rt = go.GetComponent<RectTransform>();
-        rt.sizeDelta = new Vector2(0f, 20f);
+        rt.sizeDelta = new Vector2(0f, height);
 
         GameObject bgGO = new GameObject("Background", typeof(RectTransform));
         bgGO.transform.SetParent(go.transform, false);
@@ -1635,7 +1617,7 @@ public static class SceneBuilder
         Image handleImg = handleGO.AddComponent<Image>();
         handleImg.color = Color.white;
         RectTransform handleRT = handleGO.GetComponent<RectTransform>();
-        handleRT.sizeDelta = new Vector2(16f, 20f);
+        handleRT.sizeDelta = new Vector2(16f, height);
 
         Slider slider = go.AddComponent<Slider>();
         slider.targetGraphic = handleImg;

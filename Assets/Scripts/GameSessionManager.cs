@@ -40,6 +40,7 @@ public class GameSessionManager : MonoBehaviour
     void Awake()
     {
         Instance = this;
+        SelectDefaultCompany();
     }
 
     void OnDestroy()
@@ -111,8 +112,16 @@ public class GameSessionManager : MonoBehaviour
         if (isNowHost) BroadcastPhase();
     }
 
-    // ブリーフィング画面の企業選択ボタンから呼ぶ想定。ホスト、かつブリーフィング中のみ選び直せる。
-    public void SelectCompany(Company company)
+    // 企業選択UIは廃止したため、ブリーフィングに入るたびにこれを呼んで1社目に固定する。
+    private void SelectDefaultCompany()
+    {
+        if (!IsHost()) return;
+        if (targetCompanies == null || targetCompanies.Length == 0) return;
+
+        SelectCompany(targetCompanies[0]);
+    }
+
+    private void SelectCompany(Company company)
     {
         if (!IsHost()) return;
         if (CurrentPhase != GamePhase.Briefing) return;
@@ -155,8 +164,6 @@ public class GameSessionManager : MonoBehaviour
         if (!IsHost()) return;
 
         MoneyGoalReached = false;
-        selectedCompany = null;
-        rivalCompany = null;
         RemainingTime = matchDurationSeconds;
 
         if (MarketManager.Instance != null) MarketManager.Instance.ResetForNewMatch();
@@ -170,6 +177,7 @@ public class GameSessionManager : MonoBehaviour
         }
 
         SetPhase(GamePhase.Briefing, won: false);
+        SelectDefaultCompany();
         BroadcastPhase();
     }
 
